@@ -44,13 +44,15 @@ crates/app/src/
   menu.rs / input.rs / render.rs / overlay.rs / hud.rs / ending.rs / driver.rs
 ```
 
-`SimTick` 链序：`ai_decide → apply_intents → economy → streams → movement → combat → victory`
+`SimTick` 链序（与旧循环严格同构，黄金快照验证过 parity）：
+`apply_intents → economy → streams → movement → combat → victory → ai_decide`
+（AI 在链尾决策，看到本 tick 最新状态；意图在下一 tick 链首统一生效——与旧「update → AI → 立即生效」循环等价）
 
 ## 3. 迁移路径（staging）
 
 - [x] **第 0 步**：git 初始化；黄金快照（`logic/tests/golden.{rs,snap}`：三个确定性场景，每 100 tick 采样粗粒度不变量；比对规则：胜者必须一致、兵力/小队数 ±2、结束 tick ±10%）。
-- [ ] **第 1 步**：logic 原地 ECS 重写（不碰 app）。
-- [ ] **第 2 步**：无头先行——复活全部测试 + `headless` 二进制对黄金快照。
+- [x] **第 1 步**：logic 原地 ECS 重写（不碰 app）。（2026-08-05 完成）
+- [x] **第 2 步**：无头先行——复活全部测试 + `headless` 二进制对黄金快照。（14+1 测试全绿；修复 AI 计时器初值 parity bug）
 - [ ] **第 3 步**：port app 表现层，顺序 render → driver → input → menu/ending → hud/overlay；每步结束游戏能跑。
 - [ ] **第 4 步**：真人试玩，恢复 M2/M3 节奏调优。
 

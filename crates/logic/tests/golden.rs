@@ -1,19 +1,18 @@
-//! 黄金快照测试：架构迁移的行为对照组。
+//! 黄金快照测试：架构迁移的行为对照组（ECS 版）。
 //!
 //! 录制：`GOLDEN_RECORD=1 cargo test -p easywar-logic --test golden`
 //! 比对：`cargo test -p easywar-logic --test golden`（默认）
 //!
-//! 快照内容为粗粒度不变量（每 100 tick 采样）：各阵营总兵力（整数）、
-//! 小队数、各阵营据点数；结局记录胜者与结束 tick。
+//! 快照文件 golden.snap 由迁移前的旧 sim 录制（git 历史可查）。
 //! 比对规则：胜者必须一致；兵力/小队数容差 ±2；结束 tick 容差 ±10%。
 
+use bevy_app::App;
 use easywar_logic::*;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-const DT: f32 = 1.0 / 64.0;
-const MAX_SECS: f32 = 900.0;
 const SAMPLE_EVERY: usize = 100;
+const MAX_SECS: f32 = 900.0;
 
 fn assets_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets")
@@ -39,58 +38,52 @@ fn scenarios() -> Vec<Scenario> {
 
 /// 运行一个场景，产出文本快照（行格式：`tick t1 t2 squads bases1 bases2`，结尾 `end winner end_tick`）
 fn run_scenario(s: &Scenario) -> String {
-    let mut game = build_game(
+    let mut app = App::new();
+    app.add_plugins(GamePlugin);
+    spawn_map(
+        app.world_mut(),
         &assets_dir().join("maps/h_1v1.toml"),
         &assets_dir().join("subjects"),
     )
     .expect("地图加载失败");
-
-    let mut ais: Vec<AiController> = Vec::new();
+    let mut ctrls = Vec::new();
     if let Some(p) = &s.ai1 {
-        ais.push(AiController::new(1, p.clone()));
+        ctrls.push(AiController::new(1, *p));
     }
     if let Some(p) = &s.ai2 {
-        ais.push(AiController::new(2, p.clone()));
+        ctrls.push(AiController::new(2, *p));
     }
+    app.world_mut().insert_resource(AiControllers(ctrls));
 
+    let world = app.world_mut();
     let mut out = String::new();
-    let steps = (MAX_SECS / DT) as usize;
+    let steps = (MAX_SECS / SIM_DT) as usize;
     let mut end_tick = steps;
     for i in 0..steps {
-        game.update(DT);
-        let mut cmds = Vec::new();
-        for ai in ais.iter_mut() {
-            cmds.extend(ai.update(&game, DT).into_iter().map(|c| (ai.faction, c)));
-        }
-        for (f, c) in cmds {
-            match c {
-                AiCommand::SetStream { source, target } => {
-                    game.set_stream(f, source, target);
-                }
-                AiCommand::StopStream { source } => game.stop_stream(f, source),
-            }
-        }
+        world.try_run_schedule(SimTick).expect("SimTick 未注册");
         if i % SAMPLE_EVERY == 0 {
-            let bases1 = game.bases.iter().filter(|b| game.cells[b.cell].owner == 1).count();
-            let bases2 = game.bases.iter().filter(|b| game.cells[b.cell].owner == 2).count();
+            let mut q = world.query::<&Squad>();
+            let squad_count = q.iter(world).count();
             writeln!(
                 out,
                 "{} {} {} {} {} {}",
                 i,
-                game.total_troops(1).round() as i64,
-                game.total_troops(2).round() as i64,
-                game.squads.len(),
-                bases1,
-                bases2
+                total_troops(world, 1).round() as i64,
+                total_troops(world, 2).round() as i64,
+                squad_count,
+                base_count(world, 1),
+                base_count(world, 2)
             )
             .unwrap();
         }
-        if game.winner.is_some() {
+        let winner = world.resource::<Winner>().0;
+        if winner.is_some() {
             end_tick = i;
-            break;
+            writeln!(out, "end {:?} {}", winner, end_tick).unwrap();
+            return out;
         }
     }
-    writeln!(out, "end {:?} {}", game.winner, end_tick).unwrap();
+    writeln!(out, "end {:?} {}", world.resource::<Winner>().0, end_tick).unwrap();
     out
 }
 

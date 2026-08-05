@@ -4,5 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# 依赖白名单（ARCHITECTURE.md §4）：bevy_ecs + bevy_app + serde + toml，其余禁入
+bevy_ecs = "0.15"
+bevy_app = "0.15"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

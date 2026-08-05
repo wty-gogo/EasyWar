@@ -1,4 +1,8 @@
-use crate::model::*;
+//! 地图与词库加载：TOML 解析后向 World 生成格子/据点实体与基础资源。
+//! 生成算法逐行移植自旧 load.rs（固定种子 + 180° 旋转对称成对赋值）。
+
+use crate::components::*;
+use bevy_ecs::prelude::*;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
@@ -119,19 +123,20 @@ impl Rng {
     }
 }
 
-// ---------- 构建 GameState ----------
+// ---------- 生成地图 ----------
 
-pub fn build_game(map_path: &Path, subjects_dir: &Path) -> Result<GameState, String> {
-    build_game_custom(map_path, subjects_dir, None, None)
+pub fn spawn_map(world: &mut World, map_path: &Path, subjects_dir: &Path) -> Result<(), String> {
+    spawn_map_custom(world, map_path, subjects_dir, None, None)
 }
 
-/// 构建游戏，可覆盖玩家/AI 据点的学科（开局界面选择）；中立要塞自动分配剩余学科
-pub fn build_game_custom(
+/// 生成地图实体，可覆盖玩家/AI 据点的学科（开局界面选择）；中立要塞自动分配剩余学科
+pub fn spawn_map_custom(
+    world: &mut World,
     map_path: &Path,
     subjects_dir: &Path,
     player_subject: Option<&str>,
     ai_subject: Option<&str>,
-) -> Result<GameState, String> {
+) -> Result<(), String> {
     let text = std::fs::read_to_string(map_path).map_err(|e| format!("读地图失败: {e}"))?;
     let mut mf: MapFile = toml::from_str(&text).map_err(|e| format!("解析地图失败: {e}"))?;
     let subjects = load_subjects(subjects_dir)?;
@@ -156,11 +161,8 @@ pub fn build_game_custom(
                 _ => {}
             }
         }
-        let mut remaining: Vec<String> = subjects
-            .keys()
-            .filter(|id| !used.contains(id))
-            .cloned()
-            .collect();
+        let mut remaining: Vec<String> =
+            subjects.keys().filter(|id| !used.contains(id)).cloned().collect();
         remaining.sort();
         let mut i = 0;
         for b in mf.base.iter_mut() {
@@ -205,18 +207,17 @@ pub fn build_game_custom(
         .map(|r| r.chars().all(|c| c == '#'))
         .collect();
 
-    // 基础格子
-    let mut cells = Vec::with_capacity(w * h);
-    for row in mf.map.layout.iter() {
-        for ch in row.chars() {
-            let kind = if ch == '#' { CellKind::Plain } else { CellKind::Void };
-            cells.push(Cell {
-                kind,
-                owner: NEUTRAL,
-                garrison: 0.0,
-                garrison_max: 0.0,
-                label: None,
-            });
+    // 先在稠密数组上跑完旧的确定性生成，再统一生成实体
+    let mut kinds = vec![CellKind::Void; w * h];
+    let mut owners = vec![NEUTRAL; w * h];
+    let mut garrison = vec![0.0f32; w * h];
+    let mut garrison_max = vec![0.0f32; w * h];
+    let mut labels: Vec<Option<String>> = vec![None; w * h];
+    for (i, row) in mf.map.layout.iter().enumerate() {
+        for (j, ch) in row.chars().enumerate() {
+            if ch == '#' {
+                kinds[i * w + j] = CellKind::Plain;
+            }
         }
     }
     let idx = |x: usize, y: usize| y * w + x;
@@ -225,8 +226,8 @@ pub fn build_game_custom(
     // 普通地块防御值：固定种子 + 对称成对赋值
     let mut rng = Rng(mf.neutral.seed | 1);
     let mut assigned: HashMap<CellIdx, f32> = HashMap::new();
-    for i in 0..cells.len() {
-        if cells[i].kind != CellKind::Plain {
+    for i in 0..kinds.len() {
+        if kinds[i] != CellKind::Plain {
             continue;
         }
         let key = if mf.neutral.rotational_symmetry { i.min(sym(i)) } else { i };
@@ -237,28 +238,33 @@ pub fn build_game_custom(
                 rng.range(mf.neutral.defense_min, mf.neutral.defense_max)
             }
         });
-        // 取整到 1 位小数，显示干净
         let v = (v * 10.0).round() / 10.0;
-        cells[i].garrison = v;
-        cells[i].garrison_max = v;
+        garrison[i] = v;
+        garrison_max[i] = v;
     }
 
     // 据点与关联地块
-    let mut bases = Vec::new();
-    let mut base_index = HashMap::new();
-    for (bi, b) in mf.base.iter().enumerate() {
+    struct BaseSpawn {
+        cell: CellIdx,
+        subject_id: String,
+        subject_name: String,
+        production_base: f32,
+        production_bonus_per_tile: f32,
+        linked: Vec<CellIdx>,
+    }
+    let mut base_spawns = Vec::new();
+    for b in mf.base.iter() {
         let subj = subjects
             .get(&b.subject)
             .ok_or_else(|| format!("未知学科: {}", b.subject))?;
         let ci = idx(b.pos.0, b.pos.1);
         let owner = faction_of_owner[&b.owner];
-        cells[ci].kind = CellKind::Base;
-        cells[ci].owner = owner;
-        cells[ci].garrison = b.garrison;
+        kinds[ci] = CellKind::Base;
+        owners[ci] = owner;
+        garrison[ci] = b.garrison;
         // 中立要塞按"可回防"处理；有主据点驻军无上限、不回防
-        cells[ci].garrison_max = if owner == NEUTRAL { b.garrison } else { f32::INFINITY };
-        cells[ci].label = Some(subj.name.clone());
-        base_index.insert(ci, bi);
+        garrison_max[ci] = if owner == NEUTRAL { b.garrison } else { f32::INFINITY };
+        labels[ci] = Some(subj.name.clone());
 
         let mut linked = Vec::new();
         for lr in &b.linked_tiles {
@@ -268,12 +274,12 @@ pub fn build_game_custom(
                 rng.range(mf.linked_tile.defense_min, mf.linked_tile.defense_max)
             });
             let v = (v * 10.0).round() / 10.0;
-            cells[li].kind = CellKind::LinkedTile;
+            kinds[li] = CellKind::LinkedTile;
             // 初始场景下除据点外均为中立格子——关联地块也要先抢才有产能加成
-            cells[li].owner = NEUTRAL;
-            cells[li].garrison = v;
-            cells[li].garrison_max = v;
-            cells[li].label = Some(
+            owners[li] = NEUTRAL;
+            garrison[li] = v;
+            garrison_max[li] = v;
+            labels[li] = Some(
                 subj.knowledge_points
                     .get(lr.knowledge_index)
                     .cloned()
@@ -282,7 +288,7 @@ pub fn build_game_custom(
             linked.push(li);
         }
 
-        bases.push(Base {
+        base_spawns.push(BaseSpawn {
             cell: ci,
             subject_id: subj.id.clone(),
             subject_name: subj.name.clone(),
@@ -292,24 +298,44 @@ pub fn build_game_custom(
         });
     }
 
-    Ok(GameState {
-        width: w,
-        height: h,
-        cells,
-        bases,
-        base_index,
-        factions,
-        squads: Vec::new(),
-        streams: Vec::new(),
-        rules: Rules {
-            garrison_cap_base: mf.rules.garrison_cap_base,
-            garrison_cap_per_tile: mf.rules.garrison_cap_per_tile,
-            regen_per_sec: mf.rules.regen_per_sec,
-            squad_interval_sec: mf.rules.squad_interval_sec,
-            squad_max_size: mf.rules.squad_max_size,
-            squad_move_sec_per_cell: mf.rules.squad_move_sec_per_cell,
-        },
-        time: 0.0,
-        winner: None,
-    })
+    // 统一生成格子实体（按 idx 顺序，含虚空格——保证 GridLookup 下标稳定）
+    let mut cell_entities = Vec::with_capacity(w * h);
+    for i in 0..w * h {
+        let e = world
+            .spawn((
+                kinds[i],
+                Owner(owners[i]),
+                Garrison { cur: garrison[i], max: garrison_max[i] },
+                Label(labels[i].clone()),
+            ))
+            .id();
+        cell_entities.push(e);
+    }
+
+    // 据点实体追加 Base 组件
+    let mut base_entities = Vec::new();
+    for bs in base_spawns {
+        let e = cell_entities[bs.cell];
+        world.entity_mut(e).insert(Base {
+            subject_id: bs.subject_id,
+            subject_name: bs.subject_name,
+            production_base: bs.production_base,
+            production_bonus_per_tile: bs.production_bonus_per_tile,
+            linked: bs.linked,
+        });
+        base_entities.push(e);
+    }
+
+    world.insert_resource(GridLookup { width: w, height: h, cells: cell_entities });
+    world.insert_resource(BaseList(base_entities));
+    world.insert_resource(Factions(factions));
+    world.insert_resource(Rules {
+        garrison_cap_base: mf.rules.garrison_cap_base,
+        garrison_cap_per_tile: mf.rules.garrison_cap_per_tile,
+        regen_per_sec: mf.rules.regen_per_sec,
+        squad_interval_sec: mf.rules.squad_interval_sec,
+        squad_max_size: mf.rules.squad_max_size,
+        squad_move_sec_per_cell: mf.rules.squad_move_sec_per_cell,
+    });
+    Ok(())
 }
