@@ -419,3 +419,42 @@ fn squads_enter_friendly_base_on_collision() {
     assert!(garrison(&mut app, fort) > 0.0, "途经小队应并入己方据点");
     assert_ne!(owner(&mut app, chem), 1, "兵被枢纽截留，化学不应被攻陷");
 }
+
+#[test]
+fn capturing_squad_garrisons_base_instead_of_returning() {
+    let mut app = build();
+    // 物理要塞作为出发据点，沿横梁攻打中立地理要塞
+    let source = base_cell(&mut app, "physics");
+    let target = base_cell(&mut app, "geography");
+    set_owner(&mut app, source, 1);
+    // 打通行军路线：横梁上的中立关联地块 (3,6)..=(10,6) 全部归玩家、防御清零
+    for x in 3..=10usize {
+        let c = 6 * 14 + x;
+        set_owner(&mut app, c, 1);
+        set_garrison(&mut app, c, 0.0);
+    }
+    // 兵力足够打下来、且驻军会被抽干 → 触发"归零停兵"的 recall，
+    // 在途小队全部被打上 return_after_target 标记
+    set_garrison(&mut app, target, 8.0);
+    set_garrison(&mut app, source, 40.0);
+    assert!(set_stream(&mut app, 1, source, target));
+
+    let mut captured = false;
+    for _ in 0..(30.0 / SIM_DT) as usize {
+        tick(&mut app, 1);
+        if !captured && owner(&mut app, target) == 1 {
+            captured = true;
+            // 占领瞬间：不应有任何小队掉头回家——
+            // 兵到了据点就入驻，回家只发生在地块终点
+            let mut q = app.world_mut().query::<&Squad>();
+            let returning = q
+                .iter(app.world_mut())
+                .filter(|s| s.faction == 1 && s.mode == SquadMode::Return)
+                .count();
+            assert_eq!(returning, 0, "据点已被占领，在途兵应并入而非回家");
+            break;
+        }
+    }
+    assert!(captured, "应攻下中立要塞");
+    assert!(garrison(&mut app, target) > 0.0, "占领者的剩余兵力应入驻据点");
+}

@@ -34,16 +34,18 @@ pub fn movement(world: &mut World) {
                     board.garrison[next] = 0.0;
                     board.owner[next] = sq.faction;
                 }
-            } else if board.kind[next] == CellKind::Base {
-                // 与己方据点碰撞：直接进入据点并入驻军（无论是否兵流终点）。
-                // 并入无上限——上限只约束生产，不约束并入
+            }
+            // 己方据点（含本步刚打下来的）：直接进入并入驻军，不看 return_after_target。
+            // 兵到了据点就是入驻——不存在"打下据点后转身回家"；回家只发生在地块终点。
+            // 并入无上限——上限只约束生产，不约束并入
+            if board.owner[next] == sq.faction && board.kind[next] == CellKind::Base {
                 board.garrison[next] += sq.troops;
                 board.touch(next);
                 sq.troops = 0.0;
             }
 
             if sq.troops <= 0.0 {
-                break; // 全灭
+                break; // 全灭或已并入
             }
 
             sq.seg += 1;
