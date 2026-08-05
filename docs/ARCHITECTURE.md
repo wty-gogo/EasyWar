@@ -53,7 +53,7 @@ crates/app/src/
 - [x] **第 0 步**：git 初始化；黄金快照（`logic/tests/golden.{rs,snap}`：三个确定性场景，每 100 tick 采样粗粒度不变量；比对规则：胜者必须一致、兵力/小队数 ±2、结束 tick ±10%）。
 - [x] **第 1 步**：logic 原地 ECS 重写（不碰 app）。（2026-08-05 完成）
 - [x] **第 2 步**：无头先行——复活全部测试 + `headless` 二进制对黄金快照。（14+1 测试全绿；修复 AI 计时器初值 parity bug）
-- [ ] **第 3 步**：port app 表现层，顺序 render → driver → input → menu/ending → hud/overlay；每步结束游戏能跑。
+- [x] **第 3 步**：port app 表现层。（2026-08-05 完成：1014 行 main.rs 拆为组合根 + common/driver/render/input/overlay/hud/menu/ending 八模块；逻辑实体与渲染实体共存同一 World，渲染只读组件；`--auto` 冒烟 60s 零 panic）
 - [ ] **第 4 步**：真人试玩，恢复 M2/M3 节奏调优。
 
 ## 4. 铁律（违反即架构腐化）
