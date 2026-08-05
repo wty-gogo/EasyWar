@@ -1,0 +1,18 @@
+[package]
+name = "easywar-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+easywar-logic = { path = "../logic" }
+bevy = { version = "0.15", default-features = false, features = [
+  "bevy_winit",
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_sprite",
+  "bevy_text",
+  "bevy_state",
+  "bevy_ui",
+  "bevy_gizmos",
+  "multi_threaded",
+] }

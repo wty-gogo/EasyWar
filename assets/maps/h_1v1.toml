@@ -1,0 +1,132 @@
+# H 型地图 · 对角 1v1（v2：链条式，全地块皆有关联据点）
+#
+# 坐标系：左上角为 (0,0)，x 向右，y 向下。
+# 布局：左右两条竖链 + 中间一条横链，全部为 1 格宽链条。
+# 6 个据点：玩家=语文(左下)，AI=数学(右上)，中立要塞=化学/音乐/物理/地理。
+# 对称性：整张地图关于中心 180° 旋转对称。
+
+[map]
+name = "H 型 · 链条 v2"
+width = 14
+height = 13
+layout = [
+  "..............",  # y=0
+  "..#........#..",  # y=1   化学        数学
+  "..#........#..",  # y=2
+  "..#........#..",  # y=3
+  "..#........#..",  # y=4
+  "..#........#..",  # y=5
+  "..##########..",  # y=6   物理—横梁—地理
+  "..#........#..",  # y=7
+  "..#........#..",  # y=8
+  "..#........#..",  # y=9
+  "..#........#..",  # y=10
+  "..#........#..",  # y=11  语文        音乐
+  "..............",  # y=12
+]
+
+# ---- 据点 ----
+# 每个据点 4 块关联地块（沿链条相邻），知识点取词库 knowledge_index
+
+[[base]]
+subject = "chinese"
+owner = "player"
+pos = [2, 11]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [2, 10], knowledge_index = 0 },  # 诗歌
+  { pos = [2, 9],  knowledge_index = 1 },  # 古文
+  { pos = [2, 8],  knowledge_index = 2 },  # 修辞
+  { pos = [2, 7],  knowledge_index = 3 },  # 语法
+]
+
+[[base]]
+subject = "math"
+owner = "ai"
+pos = [11, 1]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [11, 2], knowledge_index = 0 },  # 函数
+  { pos = [11, 3], knowledge_index = 1 },  # 几何
+  { pos = [11, 4], knowledge_index = 2 },  # 代数
+  { pos = [11, 5], knowledge_index = 3 },  # 数列
+]
+
+[[base]]
+subject = "chemistry"
+owner = "neutral"
+pos = [2, 1]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [2, 2], knowledge_index = 0 },   # 元素
+  { pos = [2, 3], knowledge_index = 1 },   # 酸碱
+  { pos = [2, 4], knowledge_index = 2 },   # 氧化
+  { pos = [2, 5], knowledge_index = 3 },   # 催化
+]
+
+[[base]]
+subject = "music"
+owner = "neutral"
+pos = [11, 11]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [11, 10], knowledge_index = 0 }, # 音阶
+  { pos = [11, 9],  knowledge_index = 1 }, # 和弦
+  { pos = [11, 8],  knowledge_index = 2 }, # 节拍
+  { pos = [11, 7],  knowledge_index = 3 }, # 旋律
+]
+
+[[base]]
+subject = "physics"
+owner = "neutral"
+pos = [2, 6]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [3, 6], knowledge_index = 0 },   # 力学
+  { pos = [4, 6], knowledge_index = 1 },   # 电学
+  { pos = [5, 6], knowledge_index = 2 },   # 光学
+  { pos = [6, 6], knowledge_index = 3 },   # 声学
+]
+
+[[base]]
+subject = "geography"
+owner = "neutral"
+pos = [11, 6]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [10, 6], knowledge_index = 0 },  # 季风
+  { pos = [9, 6],  knowledge_index = 1 },  # 洋流
+  { pos = [8, 6],  knowledge_index = 2 },  # 地形
+  { pos = [7, 6],  knowledge_index = 3 },  # 气候
+]
+
+# ---- 中立普通地块 ----
+# v2 地图没有普通地块（全地块皆关联），本节保留仅为 schema 兼容。
+[neutral]
+defense_min = 21
+defense_max = 24
+beam_defense_min = 21
+beam_defense_max = 24
+seed = 42
+rotational_symmetry = true
+
+# ---- 关联地块数值 ----
+[linked_tile]
+defense_min = 21        # 防御值集中在 21~24，不要大随机
+defense_max = 24
+production_bonus = 0.2  # 每块 +0.2 兵/秒；基础 2.5，4 块全占 = 3.3 兵/秒
+
+# ---- 全局规则 ----
+[rules]
+garrison_cap_base = 80      # 据点驻军基础上限
+garrison_cap_per_tile = 10  # 每块已占领关联地块 +10 上限
+regen_per_sec = 1.0
+squad_interval_sec = 0.2
+squad_max_size = 3
+squad_move_sec_per_cell = 0.4
