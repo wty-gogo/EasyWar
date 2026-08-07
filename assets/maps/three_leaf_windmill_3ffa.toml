@@ -1,0 +1,145 @@
+# 三叶风车 · 3 人混战候选 C
+#
+# 三座共享枢纽两两相连，每名玩家另有一片只接本家的经济叶子。
+# 三个出生位两两格距为 8；到共享枢纽的机会集合均为 [4, 4, 8]，
+# 相邻枢纽据点间均为 6 格，本地经济叶子均为 3 格。
+
+[map]
+name = "三叶风车 · 3 人混战"
+width = 17
+height = 10
+layout = [
+  ".....######......",
+  "......#.#.#......",
+  "......####.......",
+  ".....######......",
+  ".....##..##......",
+  ".....######......",
+  "....###..###.....",
+  "....####.###.....",
+  ".###############.",
+  "#####.......####.",
+]
+
+[[base]]
+subject = "chinese"
+owner = "player"
+pos = [7, 2]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [7, 3] }, { pos = [8, 3] }, { pos = [8, 2] },
+  { pos = [6, 2] }, { pos = [9, 2] }, { pos = [8, 1] },
+]
+
+[[base]]
+subject = "math"
+owner = "ai"
+pos = [4, 7]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [5, 5] }, { pos = [5, 6] }, { pos = [5, 7] },
+  { pos = [4, 6] }, { pos = [4, 8] }, { pos = [5, 8] },
+]
+
+[[base]]
+subject = "physics"
+owner = "ai2"
+pos = [10, 7]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [10, 5] }, { pos = [10, 6] }, { pos = [11, 6] },
+  { pos = [11, 7] }, { pos = [11, 8] }, { pos = [10, 8] },
+]
+
+[[base]]
+subject = "history"
+owner = "neutral"
+pos = [5, 4]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [5, 3] }, { pos = [6, 3] }, { pos = [6, 4] },
+  { pos = [6, 5] }, { pos = [7, 5] }, { pos = [6, 6] },
+]
+
+[[base]]
+subject = "engineering"
+owner = "neutral"
+pos = [7, 8]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [6, 7] }, { pos = [6, 8] }, { pos = [8, 8] },
+  { pos = [9, 8] }, { pos = [9, 7] }, { pos = [7, 7] },
+]
+
+[[base]]
+subject = "biology"
+owner = "neutral"
+pos = [9, 4]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [10, 4] }, { pos = [9, 3] }, { pos = [10, 3] },
+  { pos = [9, 5] }, { pos = [8, 5] }, { pos = [9, 6] },
+]
+
+[[base]]
+subject = "economics"
+owner = "neutral"
+pos = [8, 0]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [7, 0] }, { pos = [9, 0] }, { pos = [6, 0] }, { pos = [10, 0] },
+  { pos = [6, 1] }, { pos = [10, 1] }, { pos = [5, 0] },
+]
+
+[[base]]
+subject = "geography"
+owner = "neutral"
+pos = [2, 8]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [3, 8] }, { pos = [1, 8] }, { pos = [1, 9] }, { pos = [2, 9] },
+  { pos = [3, 9] }, { pos = [4, 9] }, { pos = [0, 9] },
+]
+
+[[base]]
+subject = "music"
+owner = "neutral"
+pos = [12, 8]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [13, 8] }, { pos = [14, 8] }, { pos = [15, 8] },
+  { pos = [12, 9] }, { pos = [13, 9] }, { pos = [14, 9] }, { pos = [15, 9] },
+]
+
+[neutral]
+defense_min = 22.5
+defense_max = 22.5
+beam_defense_min = 22.5
+beam_defense_max = 22.5
+seed = 947
+rotational_symmetry = false
+symmetry = "none"
+
+[linked_tile]
+defense_min = 22.5
+defense_max = 22.5
+production_bonus = 0.2
+
+[rules]
+garrison_cap_base = 80
+garrison_cap_per_tile = 10
+regen_per_sec = 1.0
+squad_interval_sec = 0.2
+squad_max_size = 3
+squad_growth_garrison_step = 40
+squad_soft_cap_garrison = 120
+squad_move_sec_per_cell = 0.4

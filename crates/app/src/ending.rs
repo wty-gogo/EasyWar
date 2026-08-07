@@ -36,8 +36,12 @@ pub fn enter_ended(mut commands: Commands, asset_server: Res<AssetServer>, info:
     ));
     commands.spawn((
         Text2d::new(format!(
-            "你占领：据点 {} 座 · 地块 {} 块\n对方占领：据点 {} 座 · 地块 {} 块",
-            info.player_bases, info.player_tiles, info.enemy_bases, info.enemy_tiles
+            "胜者：{}\n你占领：据点 {} 座 · 地块 {} 块\n其余阵营合计：据点 {} 座 · 地块 {} 块",
+            info.winner_name,
+            info.player_bases,
+            info.player_tiles,
+            info.rival_bases,
+            info.rival_tiles
         )),
         TextFont {
             font: FontSource::Handle(font.clone()),

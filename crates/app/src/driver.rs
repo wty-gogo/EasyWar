@@ -138,6 +138,7 @@ pub fn drive_sim(world: &mut World) {
 pub fn check_end(
     mut commands: Commands,
     winner: Res<Winner>,
+    factions: Res<Factions>,
     cells: Query<(&CellKind, &Owner)>,
     mut next: ResMut<NextState<AppState>>,
 ) {
@@ -150,10 +151,26 @@ pub fn check_end(
         };
         commands.insert_resource(EndInfo {
             winner: w,
+            winner_name: factions
+                .0
+                .iter()
+                .find(|faction| faction.id == w)
+                .map(|faction| faction.name.clone())
+                .unwrap_or_else(|| format!("阵营 {w}")),
             player_bases: count(PLAYER, CellKind::Base),
             player_tiles: count(PLAYER, CellKind::LinkedTile),
-            enemy_bases: count(2, CellKind::Base),
-            enemy_tiles: count(2, CellKind::LinkedTile),
+            rival_bases: cells
+                .iter()
+                .filter(|(kind, owner)| {
+                    owner.0 != NEUTRAL && owner.0 != PLAYER && **kind == CellKind::Base
+                })
+                .count(),
+            rival_tiles: cells
+                .iter()
+                .filter(|(kind, owner)| {
+                    owner.0 != NEUTRAL && owner.0 != PLAYER && **kind == CellKind::LinkedTile
+                })
+                .count(),
         });
         next.set(AppState::Ended);
     }

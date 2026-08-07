@@ -168,4 +168,5 @@ regen_per_sec = 1.0
 squad_interval_sec = 0.2
 squad_max_size = 3
 squad_growth_garrison_step = 40
+squad_soft_cap_garrison = 120
 squad_move_sec_per_cell = 0.4

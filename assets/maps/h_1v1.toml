@@ -129,5 +129,6 @@ garrison_cap_per_tile = 10  # 每块已占领关联地块 +10 上限
 regen_per_sec = 1.0
 squad_interval_sec = 0.2
 squad_max_size = 3                 # 40 兵以内每波 3 兵
-squad_growth_garrison_step = 40    # 超过 40 后，每多 40 驻军，理论每波兵力 +1
+squad_growth_garrison_step = 40    # 40～120 兵时，每多 40 驻军，理论每波兵力 +1
+squad_soft_cap_garrison = 120      # 超过 120 后改用平方根缓增长
 squad_move_sec_per_cell = 0.4

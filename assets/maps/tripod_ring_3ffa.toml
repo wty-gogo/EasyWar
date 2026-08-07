@@ -1,0 +1,113 @@
+# 三足环 · 3 人混战
+#
+# 3 个出生据点与 3 个中立要塞沿六节点环交替分布。相邻据点之间固定间隔
+# 5 块关联地块，因此任意两名玩家之间的短路线都恰好经过 1 座中立要塞，
+# 路程与防御成本完全一致。关联地块使用固定防御值，避免矩形落格引入座位偏差。
+
+[map]
+name = "三足环 · 3 人混战"
+width = 17
+height = 9
+layout = [
+  ".................",
+  "..#############..",
+  "..#...........#..",
+  "..#...........#..",
+  "..#...........#..",
+  "..#...........#..",
+  "..#...........#..",
+  "..#############..",
+  ".................",
+]
+
+# 环上顺时针顺序：玩家 → 中立 → AI2 → 中立 → AI1 → 中立。
+
+[[base]]
+subject = "chinese"
+owner = "player"
+pos = [8, 1]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [9, 1] }, { pos = [10, 1] }, { pos = [11, 1] },
+  { pos = [12, 1] }, { pos = [13, 1] },
+]
+
+[[base]]
+subject = "engineering"
+owner = "neutral"
+pos = [14, 1]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [14, 2] }, { pos = [14, 3] }, { pos = [14, 4] },
+  { pos = [14, 5] }, { pos = [14, 6] },
+]
+
+[[base]]
+subject = "physics"
+owner = "ai2"
+pos = [14, 7]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [13, 7] }, { pos = [12, 7] }, { pos = [11, 7] },
+  { pos = [10, 7] }, { pos = [9, 7] },
+]
+
+[[base]]
+subject = "economics"
+owner = "neutral"
+pos = [8, 7]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [7, 7] }, { pos = [6, 7] }, { pos = [5, 7] },
+  { pos = [4, 7] }, { pos = [3, 7] },
+]
+
+[[base]]
+subject = "math"
+owner = "ai"
+pos = [2, 7]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [2, 6] }, { pos = [2, 5] }, { pos = [2, 4] },
+  { pos = [2, 3] }, { pos = [2, 2] },
+]
+
+[[base]]
+subject = "history"
+owner = "neutral"
+pos = [2, 1]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [3, 1] }, { pos = [4, 1] }, { pos = [5, 1] },
+  { pos = [6, 1] }, { pos = [7, 1] },
+]
+
+[neutral]
+defense_min = 22.5
+defense_max = 22.5
+beam_defense_min = 22.5
+beam_defense_max = 22.5
+seed = 903
+rotational_symmetry = false
+symmetry = "none"
+
+[linked_tile]
+defense_min = 22.5
+defense_max = 22.5
+production_bonus = 0.2
+
+[rules]
+garrison_cap_base = 80
+garrison_cap_per_tile = 10
+regen_per_sec = 1.0
+squad_interval_sec = 0.2
+squad_max_size = 3
+squad_growth_garrison_step = 40
+squad_soft_cap_garrison = 120
+squad_move_sec_per_cell = 0.4

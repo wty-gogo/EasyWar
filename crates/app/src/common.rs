@@ -22,7 +22,7 @@ pub struct MapChoice {
     pub file: &'static str,
 }
 
-pub const MAPS: [MapChoice; 4] = [
+pub const MAPS: [MapChoice; 7] = [
     MapChoice {
         name: "经典 H",
         file: "h_1v1.toml",
@@ -38,6 +38,18 @@ pub const MAPS: [MapChoice; 4] = [
     MapChoice {
         name: "外环横梁·实验",
         file: "ring_chord_1v1.toml",
+    },
+    MapChoice {
+        name: "三足环·3人混战",
+        file: "tripod_ring_3ffa.toml",
+    },
+    MapChoice {
+        name: "双层三角·3人候选",
+        file: "layered_triangle_3ffa.toml",
+    },
+    MapChoice {
+        name: "三叶风车·3人候选",
+        file: "three_leaf_windmill_3ffa.toml",
     },
 ];
 
@@ -100,10 +112,11 @@ pub struct DebugHud {
 #[derive(Resource)]
 pub struct EndInfo {
     pub winner: FactionId,
+    pub winner_name: String,
     pub player_bases: usize,
     pub player_tiles: usize,
-    pub enemy_bases: usize,
-    pub enemy_tiles: usize,
+    pub rival_bases: usize,
+    pub rival_tiles: usize,
 }
 
 /// 棋盘实体已生成标记

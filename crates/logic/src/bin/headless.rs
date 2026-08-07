@@ -43,7 +43,9 @@ fn main() {
     let steps = (secs / SIM_DT) as usize;
     let report_every = (60.0 / SIM_DT) as usize;
     for i in 0..steps {
-        app.world_mut().try_run_schedule(SimTick).expect("SimTick 未注册");
+        app.world_mut()
+            .try_run_schedule(SimTick)
+            .expect("SimTick 未注册");
         if i % report_every == 0 {
             let world = app.world_mut();
             let clock = world.resource::<GameClock>().time;

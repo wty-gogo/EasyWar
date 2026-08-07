@@ -128,10 +128,14 @@ pub fn enter_menu(
         -108.0,
         Color::srgb(0.7, 0.7, 0.7),
     );
+    const MAP_COLUMNS: usize = 4;
     for (i, map) in MAPS.iter().enumerate() {
-        let x = (i as f32 - (MAPS.len() - 1) as f32 / 2.0) * 205.0;
-        let center = Vec2::new(x, -148.0);
-        let half = Vec2::new(92.0, 22.0);
+        let row = i / MAP_COLUMNS;
+        let column = i % MAP_COLUMNS;
+        let count_in_row = (MAPS.len() - row * MAP_COLUMNS).min(MAP_COLUMNS);
+        let x = (column as f32 - (count_in_row - 1) as f32 / 2.0) * 170.0;
+        let center = Vec2::new(x, -140.0 - row as f32 * 54.0);
+        let half = Vec2::new(78.0, 22.0);
         commands.spawn((
             Sprite {
                 color: Color::srgb(0.24, 0.29, 0.36),
@@ -150,7 +154,7 @@ pub fn enter_menu(
             Text2d::new(map.name),
             TextFont {
                 font: FontSource::Handle(font.clone()),
-                font_size: 17.0.into(),
+                font_size: 15.0.into(),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -160,7 +164,7 @@ pub fn enter_menu(
     }
 
     // 开始按钮
-    let center = Vec2::new(0.0, -218.0);
+    let center = Vec2::new(0.0, -258.0);
     let half = Vec2::new(110.0, 34.0);
     commands.spawn((
         Sprite {
