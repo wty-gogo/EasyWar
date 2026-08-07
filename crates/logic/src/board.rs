@@ -4,7 +4,6 @@
 use crate::components::*;
 use bevy_ecs::prelude::*;
 
-
 /// 据点的可计算信息（从 Base 组件 + 格子状态派生）
 #[derive(Clone, Debug)]
 pub(crate) struct BaseInfo {
@@ -130,7 +129,10 @@ impl Board {
 
     fn owned_linked(&self, base: &BaseInfo) -> usize {
         let owner = self.owner[base.cell];
-        base.linked.iter().filter(|&&c| self.owner[c] == owner).count()
+        base.linked
+            .iter()
+            .filter(|&&c| self.owner[c] == owner)
+            .count()
     }
 
     /// 据点实时产能 = 基础 + 加成 × 当前归属方占领的关联地块数
@@ -144,12 +146,18 @@ impl Board {
 
     /// 据点驻军上限 = 基础上限 + 每块已占领关联地块 × 上限加成
     pub(crate) fn base_garrison_cap(&self, base: &BaseInfo) -> f32 {
-        self.rules.garrison_cap_base + self.rules.garrison_cap_per_tile * self.owned_linked(base) as f32
+        self.rules.garrison_cap_base
+            + self.rules.garrison_cap_per_tile * self.owned_linked(base) as f32
     }
 
     /// 纯最短路径（按格数），等长时优先己方格子。
     /// Dijkstra：进入每格代价 = 1 + ε·(非己方)。逐行移植自旧 model.rs。
-    pub(crate) fn find_path(&self, from: CellIdx, to: CellIdx, faction: FactionId) -> Option<Vec<CellIdx>> {
+    pub(crate) fn find_path(
+        &self,
+        from: CellIdx,
+        to: CellIdx,
+        faction: FactionId,
+    ) -> Option<Vec<CellIdx>> {
         if from == to || !self.kind[from].enterable() || !self.kind[to].enterable() {
             return None;
         }

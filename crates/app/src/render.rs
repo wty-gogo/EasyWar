@@ -3,8 +3,8 @@
 
 use crate::common::*;
 use bevy::prelude::*;
-use easywar_logic::*;
 use easywar_logic::Label as LogicLabel;
+use easywar_logic::*;
 
 type CellQuery<'w, 's> = Query<
     'w,
@@ -39,12 +39,7 @@ fn base_cap(
     rules.garrison_cap_base + rules.garrison_cap_per_tile * owned as f32
 }
 
-fn cell_text(
-    rules: &Rules,
-    cells: &CellQuery,
-    lookup: &GridLookup,
-    e: Entity,
-) -> String {
+fn cell_text(rules: &Rules, cells: &CellQuery, lookup: &GridLookup, e: Entity) -> String {
     let (kind, owner, garrison, label_text, base) = cells.get(e).unwrap();
     let num = if *kind == CellKind::Base {
         let cap = match (base, owner.0) {
@@ -69,7 +64,13 @@ fn border_color(factions: &Factions, owner: FactionId) -> Color {
     Color::srgba(c[0], c[1], c[2], 1.0)
 }
 
-fn fill_color(factions: &Factions, tint: &LinkedTint, cells: &CellQuery, e: Entity, idx: CellIdx) -> Color {
+fn fill_color(
+    factions: &Factions,
+    tint: &LinkedTint,
+    cells: &CellQuery,
+    e: Entity,
+    idx: CellIdx,
+) -> Color {
     let (kind, owner, _, _, _) = cells.get(e).unwrap();
     if owner.0 != NEUTRAL {
         let c = faction_color(factions, owner.0);
@@ -126,7 +127,9 @@ pub fn spawn_board_system(
     let origin = grid_origin(&lookup);
 
     for (i, &e) in lookup.cells.iter().enumerate() {
-        let Ok((kind, owner, _, _, _)) = cells.get(e) else { continue };
+        let Ok((kind, owner, _, _, _)) = cells.get(e) else {
+            continue;
+        };
         if !kind.enterable() {
             continue;
         }
@@ -155,8 +158,8 @@ pub fn spawn_board_system(
         commands.spawn((
             Text2d::new(cell_text(&rules, &cells, &lookup, e)),
             TextFont {
-                font: if is_base { bold.clone() } else { font.clone() },
-                font_size: if is_base { 14.0 } else { 11.0 },
+                font: FontSource::Handle(if is_base { bold.clone() } else { font.clone() }),
+                font_size: (if is_base { 14.0 } else { 11.0 }).into(),
                 ..default()
             },
             TextColor(text_color(kind, owner.0)),
@@ -167,15 +170,23 @@ pub fn spawn_board_system(
     }
 
     commands.spawn((
-        Text2d::new("拖动据点派兵 · Shift+点击多选 · 空白处拖框选 · 点出兵据点停止 · 1/2/3 换难度"),
-        TextFont { font: font.clone(), font_size: 15.0, ..default() },
+        Text2d::new("点击据点后点击目标派兵 · 拖框/Shift 多选 · 再点单选据点停止 · 右键/Esc 取消"),
+        TextFont {
+            font: FontSource::Handle(font.clone()),
+            font_size: 15.0.into(),
+            ..default()
+        },
         TextColor(Color::srgb(0.5, 0.5, 0.5)),
         Transform::from_xyz(0.0, 360.0, 1.0),
         BoardEntity,
     ));
     commands.spawn((
         Text2d::new(""),
-        TextFont { font, font_size: 12.0, ..default() },
+        TextFont {
+            font: FontSource::Handle(font),
+            font_size: 12.0.into(),
+            ..default()
+        },
         TextColor(Color::srgb(0.6, 0.6, 0.6)),
         Transform::from_xyz(0.0, 335.0, 1.0),
         BoardEntity,
@@ -248,7 +259,11 @@ pub fn sync_squads(
             let offset = (k as f32 - (n as f32 - 1.0) / 2.0) * GAP;
             let p = pos + perp * offset;
             commands.spawn((
-                Sprite { color, custom_size: Some(Vec2::splat(DOT)), ..default() },
+                Sprite {
+                    color,
+                    custom_size: Some(Vec2::splat(DOT)),
+                    ..default()
+                },
                 Transform::from_xyz(p.x, p.y, 2.0),
                 BoardEntity,
                 SquadDot,

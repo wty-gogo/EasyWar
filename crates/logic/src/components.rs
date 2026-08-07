@@ -99,6 +99,8 @@ pub struct Stream {
     pub target: CellIdx,
     pub path: Vec<CellIdx>,
     pub spawn_accum: f32,
+    /// 理论波次兵力取整后留下的小数额度；改道会创建新兵流并清零。
+    pub troop_carry: f32,
     pub active: bool,
     /// 单调递增序号：保证迭代顺序 = 建立顺序（确定性）
     pub seq: u64,
@@ -150,6 +152,8 @@ pub struct Rules {
     pub regen_per_sec: f32,
     pub squad_interval_sec: f32,
     pub squad_max_size: f32,
+    /// 驻军超过此值后，每再增加这么多驻军，理论每波兵力增加 1。
+    pub squad_growth_garrison_step: f32,
     pub squad_move_sec_per_cell: f32,
 }
 

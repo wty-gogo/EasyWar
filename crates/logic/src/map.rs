@@ -4,7 +4,7 @@
 use crate::components::*;
 use bevy_ecs::prelude::*;
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 
 // ---------- TOML 文件结构（与 assets/maps/*.toml 对应） ----------
@@ -40,7 +40,7 @@ struct BaseDef {
 #[derive(Deserialize)]
 struct LinkedRef {
     pos: (usize, usize),
-    knowledge_index: usize,
+    // 知识点不再按索引固定：每局从学科词库随机抽取
 }
 
 #[derive(Deserialize)]
@@ -50,7 +50,10 @@ struct NeutralDef {
     beam_defense_min: f32,
     beam_defense_max: f32,
     seed: u64,
+    #[serde(default)]
     rotational_symmetry: bool,
+    #[serde(default)]
+    symmetry: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -67,7 +70,170 @@ struct RulesDef {
     regen_per_sec: f32,
     squad_interval_sec: f32,
     squad_max_size: f32,
+    #[serde(default = "default_squad_growth_garrison_step")]
+    squad_growth_garrison_step: f32,
     squad_move_sec_per_cell: f32,
+}
+
+fn default_squad_growth_garrison_step() -> f32 {
+    40.0
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MapSymmetry {
+    None,
+    Rotational,
+    Vertical,
+    Horizontal,
+}
+
+fn map_symmetry(neutral: &NeutralDef) -> Result<MapSymmetry, String> {
+    match neutral.symmetry.as_deref() {
+        Some("none") => Ok(MapSymmetry::None),
+        Some("rotational") => Ok(MapSymmetry::Rotational),
+        Some("vertical") => Ok(MapSymmetry::Vertical),
+        Some("horizontal") => Ok(MapSymmetry::Horizontal),
+        Some(other) => Err(format!("未知地图对称方式: {other}")),
+        None if neutral.rotational_symmetry => Ok(MapSymmetry::Rotational),
+        None => Ok(MapSymmetry::None),
+    }
+}
+
+fn symmetric_index(i: usize, width: usize, height: usize, symmetry: MapSymmetry) -> usize {
+    let (x, y) = (i % width, i / width);
+    let (sx, sy) = match symmetry {
+        MapSymmetry::None => (x, y),
+        MapSymmetry::Rotational => (width - 1 - x, height - 1 - y),
+        MapSymmetry::Vertical => (width - 1 - x, y),
+        MapSymmetry::Horizontal => (x, height - 1 - y),
+    };
+    sy * width + sx
+}
+
+/// 只校验地图数据本身，不访问 ECS；加载和测试共用同一组不变量。
+fn validate_map_file(mf: &MapFile) -> Result<MapSymmetry, String> {
+    let (width, height) = (mf.map.width, mf.map.height);
+    if width == 0 || height == 0 {
+        return Err("地图尺寸不能为 0".into());
+    }
+    if mf.map.layout.len() != height || mf.map.layout.iter().any(|row| row.chars().count() != width)
+    {
+        return Err("地图 layout 尺寸与 width/height 不符".into());
+    }
+    if mf
+        .map
+        .layout
+        .iter()
+        .flat_map(|row| row.chars())
+        .any(|cell| cell != '.' && cell != '#')
+    {
+        return Err("地图 layout 只允许使用 '.' 与 '#'".into());
+    }
+    if mf.base.len() < 2 {
+        return Err("地图至少需要 2 个据点".into());
+    }
+    if !mf.rules.squad_growth_garrison_step.is_finite()
+        || mf.rules.squad_growth_garrison_step <= 0.0
+    {
+        return Err("动态波次的驻军增长步长必须大于 0".into());
+    }
+
+    let enterable: Vec<bool> = mf
+        .map
+        .layout
+        .iter()
+        .flat_map(|row| row.chars().map(|cell| cell == '#'))
+        .collect();
+    let mut claimed_by: Vec<Option<&str>> = vec![None; width * height];
+    let index_of = |pos: (usize, usize)| -> Result<usize, String> {
+        let (x, y) = pos;
+        if x >= width || y >= height {
+            Err(format!("坐标越界: [{x}, {y}]"))
+        } else {
+            Ok(y * width + x)
+        }
+    };
+
+    for base in &mf.base {
+        if !(1..=10).contains(&base.linked_tiles.len()) {
+            return Err(format!(
+                "据点 {} 的关联地块数必须在 1～10，实际为 {}",
+                base.subject,
+                base.linked_tiles.len()
+            ));
+        }
+        let positions =
+            std::iter::once(base.pos).chain(base.linked_tiles.iter().map(|tile| tile.pos));
+        for pos in positions {
+            let index = index_of(pos)?;
+            if !enterable[index] {
+                return Err(format!(
+                    "据点 {} 声明了 layout 外的格子: [{}, {}]",
+                    base.subject, pos.0, pos.1
+                ));
+            }
+            if let Some(other) = claimed_by[index] {
+                return Err(format!(
+                    "格子 [{}, {}] 同时关联 {} 与 {}",
+                    pos.0, pos.1, other, base.subject
+                ));
+            }
+            claimed_by[index] = Some(&base.subject);
+        }
+    }
+
+    if let Some(index) = enterable
+        .iter()
+        .zip(&claimed_by)
+        .position(|(&is_enterable, owner)| is_enterable != owner.is_some())
+    {
+        return Err(format!(
+            "格子 [{}, {}] 未且仅未关联一个据点",
+            index % width,
+            index / width
+        ));
+    }
+
+    let start = enterable
+        .iter()
+        .position(|&cell| cell)
+        .ok_or_else(|| "地图没有可进入格子".to_string())?;
+    let mut seen = vec![false; width * height];
+    let mut queue = VecDeque::from([start]);
+    seen[start] = true;
+    while let Some(index) = queue.pop_front() {
+        let (x, y) = (index % width, index / width);
+        let adjacent = [
+            x.checked_sub(1).map(|nx| y * width + nx),
+            (x + 1 < width).then_some(y * width + x + 1),
+            y.checked_sub(1).map(|ny| ny * width + x),
+            (y + 1 < height).then_some((y + 1) * width + x),
+        ];
+        for next in adjacent.into_iter().flatten() {
+            if enterable[next] && !seen[next] {
+                seen[next] = true;
+                queue.push_back(next);
+            }
+        }
+    }
+    if enterable
+        .iter()
+        .enumerate()
+        .any(|(i, &cell)| cell && !seen[i])
+    {
+        return Err("地图存在不连通的可进入区域".into());
+    }
+
+    let symmetry = map_symmetry(&mf.neutral)?;
+    if symmetry != MapSymmetry::None
+        && enterable
+            .iter()
+            .enumerate()
+            .any(|(i, &cell)| cell != enterable[symmetric_index(i, width, height, symmetry)])
+    {
+        return Err(format!("地图占用格不满足声明的 {symmetry:?} 对称"));
+    }
+    Ok(symmetry)
 }
 
 // ---------- 学科词库 ----------
@@ -89,8 +255,10 @@ pub fn load_subjects(dir: &Path) -> Result<HashMap<String, SubjectDef>, String> 
         if path.extension().and_then(|s| s.to_str()) != Some("toml") {
             continue;
         }
-        let text = std::fs::read_to_string(&path).map_err(|e| format!("读 {:?} 失败: {e}", path))?;
-        let def: SubjectDef = toml::from_str(&text).map_err(|e| format!("解析 {:?} 失败: {e}", path))?;
+        let text =
+            std::fs::read_to_string(&path).map_err(|e| format!("读 {:?} 失败: {e}", path))?;
+        let def: SubjectDef =
+            toml::from_str(&text).map_err(|e| format!("解析 {:?} 失败: {e}", path))?;
         out.insert(def.id.clone(), def);
     }
     Ok(out)
@@ -126,7 +294,24 @@ impl Rng {
 // ---------- 生成地图 ----------
 
 pub fn spawn_map(world: &mut World, map_path: &Path, subjects_dir: &Path) -> Result<(), String> {
-    spawn_map_custom(world, map_path, subjects_dir, None, None)
+    spawn_map_inner(world, map_path, subjects_dir, None, None, None)
+}
+
+/// 使用指定防御随机种子加载地图，供交换出生位的批量自博弈复用。
+pub fn spawn_map_seeded(
+    world: &mut World,
+    map_path: &Path,
+    subjects_dir: &Path,
+    defense_seed: u64,
+) -> Result<(), String> {
+    spawn_map_inner(
+        world,
+        map_path,
+        subjects_dir,
+        None,
+        None,
+        Some(defense_seed),
+    )
 }
 
 /// 生成地图实体，可覆盖玩家/AI 据点的学科（开局界面选择）；中立要塞自动分配剩余学科
@@ -137,9 +322,42 @@ pub fn spawn_map_custom(
     player_subject: Option<&str>,
     ai_subject: Option<&str>,
 ) -> Result<(), String> {
+    spawn_map_inner(
+        world,
+        map_path,
+        subjects_dir,
+        player_subject,
+        ai_subject,
+        None,
+    )
+}
+
+fn spawn_map_inner(
+    world: &mut World,
+    map_path: &Path,
+    subjects_dir: &Path,
+    player_subject: Option<&str>,
+    ai_subject: Option<&str>,
+    defense_seed: Option<u64>,
+) -> Result<(), String> {
     let text = std::fs::read_to_string(map_path).map_err(|e| format!("读地图失败: {e}"))?;
     let mut mf: MapFile = toml::from_str(&text).map_err(|e| format!("解析地图失败: {e}"))?;
+    let symmetry = validate_map_file(&mf)?;
     let subjects = load_subjects(subjects_dir)?;
+
+    for base in &mf.base {
+        let subject = subjects
+            .get(&base.subject)
+            .ok_or_else(|| format!("未知学科: {}", base.subject))?;
+        if subject.knowledge_points.len() < base.linked_tiles.len() {
+            return Err(format!(
+                "学科 {} 只有 {} 个知识点，无法分配 {} 块关联地块",
+                base.subject,
+                subject.knowledge_points.len(),
+                base.linked_tiles.len()
+            ));
+        }
+    }
 
     // 学科重排：玩家/AI 用选择的学科，中立据点按顺序分配剩余学科
     if player_subject.is_some() || ai_subject.is_some() {
@@ -161,8 +379,11 @@ pub fn spawn_map_custom(
                 _ => {}
             }
         }
-        let mut remaining: Vec<String> =
-            subjects.keys().filter(|id| !used.contains(id)).cloned().collect();
+        let mut remaining: Vec<String> = subjects
+            .keys()
+            .filter(|id| !used.contains(id))
+            .cloned()
+            .collect();
         remaining.sort();
         let mut i = 0;
         for b in mf.base.iter_mut() {
@@ -174,9 +395,6 @@ pub fn spawn_map_custom(
     }
 
     let (w, h) = (mf.map.width, mf.map.height);
-    if mf.map.layout.len() != h || mf.map.layout.iter().any(|r| r.chars().count() != w) {
-        return Err("地图 layout 尺寸与 width/height 不符".into());
-    }
 
     // 阵营分配：player → 1，ai → 2（按出现顺序往后）
     let mut faction_of_owner: HashMap<String, FactionId> = HashMap::new();
@@ -221,16 +439,22 @@ pub fn spawn_map_custom(
         }
     }
     let idx = |x: usize, y: usize| y * w + x;
-    let sym = |i: usize| (h - 1 - i / w) * w + (w - 1 - i % w); // 180° 旋转对称格
+    let symmetry_key = |i: usize| {
+        if symmetry == MapSymmetry::None {
+            i
+        } else {
+            i.min(symmetric_index(i, w, h, symmetry))
+        }
+    };
 
     // 普通地块防御值：固定种子 + 对称成对赋值
-    let mut rng = Rng(mf.neutral.seed | 1);
+    let mut rng = Rng(defense_seed.unwrap_or(mf.neutral.seed) | 1);
     let mut assigned: HashMap<CellIdx, f32> = HashMap::new();
     for i in 0..kinds.len() {
         if kinds[i] != CellKind::Plain {
             continue;
         }
-        let key = if mf.neutral.rotational_symmetry { i.min(sym(i)) } else { i };
+        let key = symmetry_key(i);
         let v = *assigned.entry(key).or_insert_with(|| {
             if is_beam_row[i / w] {
                 rng.range(mf.neutral.beam_defense_min, mf.neutral.beam_defense_max)
@@ -252,6 +476,13 @@ pub fn spawn_map_custom(
         production_bonus_per_tile: f32,
         linked: Vec<CellIdx>,
     }
+    // 知识点标签每局随机：系统时间播种的独立 RNG（防御值仍用固定种子，数值可复现）
+    let mut label_rng = Rng(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0x9E37_79B9_7F4A_7C15)
+        | 1);
+
     let mut base_spawns = Vec::new();
     for b in mf.base.iter() {
         let subj = subjects
@@ -263,13 +494,24 @@ pub fn spawn_map_custom(
         owners[ci] = owner;
         garrison[ci] = b.garrison;
         // 中立要塞按"可回防"处理；有主据点驻军无上限、不回防
-        garrison_max[ci] = if owner == NEUTRAL { b.garrison } else { f32::INFINITY };
+        garrison_max[ci] = if owner == NEUTRAL {
+            b.garrison
+        } else {
+            f32::INFINITY
+        };
         labels[ci] = Some(subj.name.clone());
 
+        // 从词库洗牌后顺序抽取：本据点内知识点名称不重复
+        let mut pool = subj.knowledge_points.clone();
+        for k in (1..pool.len()).rev() {
+            let j = (label_rng.next() % (k as u64 + 1)) as usize;
+            pool.swap(j, k);
+        }
+
         let mut linked = Vec::new();
-        for lr in &b.linked_tiles {
+        for (n, lr) in b.linked_tiles.iter().enumerate() {
             let li = idx(lr.pos.0, lr.pos.1);
-            let key = if mf.neutral.rotational_symmetry { li.min(sym(li)) } else { li };
+            let key = symmetry_key(li);
             let v = *assigned.entry(key).or_insert_with(|| {
                 rng.range(mf.linked_tile.defense_min, mf.linked_tile.defense_max)
             });
@@ -279,12 +521,7 @@ pub fn spawn_map_custom(
             owners[li] = NEUTRAL;
             garrison[li] = v;
             garrison_max[li] = v;
-            labels[li] = Some(
-                subj.knowledge_points
-                    .get(lr.knowledge_index)
-                    .cloned()
-                    .unwrap_or_else(|| "??".into()),
-            );
+            labels[li] = Some(pool.get(n).cloned().unwrap_or_else(|| "??".into()));
             linked.push(li);
         }
 
@@ -305,7 +542,10 @@ pub fn spawn_map_custom(
             .spawn((
                 kinds[i],
                 Owner(owners[i]),
-                Garrison { cur: garrison[i], max: garrison_max[i] },
+                Garrison {
+                    cur: garrison[i],
+                    max: garrison_max[i],
+                },
                 Label(labels[i].clone()),
             ))
             .id();
@@ -326,7 +566,11 @@ pub fn spawn_map_custom(
         base_entities.push(e);
     }
 
-    world.insert_resource(GridLookup { width: w, height: h, cells: cell_entities });
+    world.insert_resource(GridLookup {
+        width: w,
+        height: h,
+        cells: cell_entities,
+    });
     world.insert_resource(BaseList(base_entities));
     world.insert_resource(Factions(factions));
     world.insert_resource(Rules {
@@ -335,6 +579,7 @@ pub fn spawn_map_custom(
         regen_per_sec: mf.rules.regen_per_sec,
         squad_interval_sec: mf.rules.squad_interval_sec,
         squad_max_size: mf.rules.squad_max_size,
+        squad_growth_garrison_step: mf.rules.squad_growth_garrison_step,
         squad_move_sec_per_cell: mf.rules.squad_move_sec_per_cell,
     });
     Ok(())

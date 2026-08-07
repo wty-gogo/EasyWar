@@ -1,0 +1,171 @@
+# 外环加横梁 · 1v1
+# 上下长线与中央快线并存，侧翼枢纽允许在外环和横梁之间切换。
+
+[map]
+name = "外环加横梁 · 1v1"
+width = 17
+height = 13
+layout = [
+  ".......###.......",
+  "....#..###..#....",
+  "...#####.#####...",
+  "..####.....####..",
+  ".##..##.#.##..##.",
+  ".#....#.#.#....#.",
+  "#################",
+  ".#....#.#.#....#.",
+  ".##..##.#.##..##.",
+  "..####.....####..",
+  "...#####.#####...",
+  "....#..###..#....",
+  ".......###.......",
+]
+
+[[base]]
+subject = "chinese"
+owner = "player"
+pos = [1, 6]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [1, 4] }, { pos = [2, 4] }, { pos = [1, 5] }, { pos = [0, 6] },
+  { pos = [2, 6] }, { pos = [3, 6] }, { pos = [4, 6] }, { pos = [1, 7] },
+  { pos = [1, 8] }, { pos = [2, 8] },
+]
+
+[[base]]
+subject = "math"
+owner = "ai"
+pos = [15, 6]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [14, 4] }, { pos = [15, 4] }, { pos = [15, 5] }, { pos = [12, 6] },
+  { pos = [13, 6] }, { pos = [14, 6] }, { pos = [16, 6] }, { pos = [15, 7] },
+  { pos = [14, 8] }, { pos = [15, 8] },
+]
+
+[[base]]
+subject = "history"
+owner = "neutral"
+pos = [4, 2]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [4, 1] }, { pos = [3, 2] }, { pos = [5, 2] }, { pos = [6, 2] },
+  { pos = [2, 3] }, { pos = [3, 3] }, { pos = [4, 3] }, { pos = [5, 3] },
+  { pos = [5, 4] },
+]
+
+[[base]]
+subject = "biology"
+owner = "neutral"
+pos = [12, 2]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [12, 1] }, { pos = [10, 2] }, { pos = [11, 2] }, { pos = [13, 2] },
+  { pos = [11, 3] }, { pos = [12, 3] }, { pos = [13, 3] }, { pos = [14, 3] },
+  { pos = [11, 4] },
+]
+
+[[base]]
+subject = "astronomy"
+owner = "neutral"
+pos = [8, 1]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [7, 0] }, { pos = [8, 0] }, { pos = [9, 0] }, { pos = [7, 1] },
+  { pos = [9, 1] }, { pos = [7, 2] }, { pos = [9, 2] },
+]
+
+[[base]]
+subject = "geography"
+owner = "neutral"
+pos = [4, 10]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [5, 8] }, { pos = [2, 9] }, { pos = [3, 9] }, { pos = [4, 9] },
+  { pos = [5, 9] }, { pos = [3, 10] }, { pos = [5, 10] }, { pos = [6, 10] },
+  { pos = [4, 11] },
+]
+
+[[base]]
+subject = "psychology"
+owner = "neutral"
+pos = [12, 10]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [11, 8] }, { pos = [11, 9] }, { pos = [12, 9] }, { pos = [13, 9] },
+  { pos = [14, 9] }, { pos = [10, 10] }, { pos = [11, 10] }, { pos = [13, 10] },
+  { pos = [12, 11] },
+]
+
+[[base]]
+subject = "medicine"
+owner = "neutral"
+pos = [8, 11]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [7, 10] }, { pos = [9, 10] }, { pos = [7, 11] }, { pos = [9, 11] },
+  { pos = [7, 12] }, { pos = [8, 12] }, { pos = [9, 12] },
+]
+
+[[base]]
+subject = "physics"
+owner = "neutral"
+pos = [6, 6]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [6, 4] }, { pos = [6, 5] }, { pos = [5, 6] },
+  { pos = [7, 6] }, { pos = [6, 7] }, { pos = [6, 8] },
+]
+
+[[base]]
+subject = "chemistry"
+owner = "neutral"
+pos = [10, 6]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [10, 4] }, { pos = [10, 5] }, { pos = [9, 6] },
+  { pos = [11, 6] }, { pos = [10, 7] }, { pos = [10, 8] },
+]
+
+[[base]]
+subject = "engineering"
+owner = "neutral"
+pos = [8, 6]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [8, 4] }, { pos = [8, 5] }, { pos = [8, 7] }, { pos = [8, 8] },
+]
+
+[neutral]
+defense_min = 21
+defense_max = 24
+beam_defense_min = 21
+beam_defense_max = 24
+seed = 703
+rotational_symmetry = false
+symmetry = "vertical"
+
+[linked_tile]
+defense_min = 21
+defense_max = 24
+production_bonus = 0.2
+
+[rules]
+garrison_cap_base = 80
+garrison_cap_per_tile = 10
+regen_per_sec = 1.0
+squad_interval_sec = 0.2
+squad_max_size = 3
+squad_growth_garrison_step = 40
+squad_move_sec_per_cell = 0.4

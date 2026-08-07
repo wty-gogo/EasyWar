@@ -1,4 +1,4 @@
-//! 兵流连线、选中框、拖拽指示等 gizmos 覆盖层。
+//! 兵流连线与据点选中框等 gizmos 覆盖层。
 
 use crate::common::*;
 use bevy::prelude::*;

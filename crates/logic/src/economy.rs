@@ -30,7 +30,8 @@ pub fn economy(world: &mut World) {
     for i in 0..board.kind.len() {
         let regens = board.owner[i] == NEUTRAL || board.kind[i] != CellKind::Base;
         if regens && board.kind[i].enterable() && board.garrison[i] < board.garrison_max[i] {
-            board.garrison[i] = (board.garrison[i] + board.rules.regen_per_sec * SIM_DT).min(board.garrison_max[i]);
+            board.garrison[i] =
+                (board.garrison[i] + board.rules.regen_per_sec * SIM_DT).min(board.garrison_max[i]);
             board.touch(i);
         }
     }

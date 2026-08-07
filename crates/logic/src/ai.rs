@@ -28,13 +28,37 @@ pub struct AiParams {
 
 impl AiParams {
     pub fn easy() -> Self {
-        Self { decision_interval: 3.0, attack_threshold: 2.0, expansion: 0, intercept: false, max_streams: 1, total_attack_ratio: 1.8, error_rate: 0.20 }
+        Self {
+            decision_interval: 3.0,
+            attack_threshold: 2.0,
+            expansion: 0,
+            intercept: false,
+            max_streams: 1,
+            total_attack_ratio: 1.8,
+            error_rate: 0.20,
+        }
     }
     pub fn normal() -> Self {
-        Self { decision_interval: 2.0, attack_threshold: 1.5, expansion: 1, intercept: false, max_streams: 2, total_attack_ratio: 1.3, error_rate: 0.05 }
+        Self {
+            decision_interval: 2.0,
+            attack_threshold: 1.5,
+            expansion: 1,
+            intercept: false,
+            max_streams: 2,
+            total_attack_ratio: 1.3,
+            error_rate: 0.05,
+        }
     }
     pub fn hard() -> Self {
-        Self { decision_interval: 1.0, attack_threshold: 1.2, expansion: 2, intercept: true, max_streams: 3, total_attack_ratio: 1.15, error_rate: 0.0 }
+        Self {
+            decision_interval: 1.0,
+            attack_threshold: 1.2,
+            expansion: 2,
+            intercept: true,
+            max_streams: 3,
+            total_attack_ratio: 1.15,
+            error_rate: 0.0,
+        }
     }
 }
 
@@ -49,12 +73,30 @@ pub struct AiController {
 
 impl AiController {
     pub fn new(faction: FactionId, params: AiParams) -> Self {
+        Self::with_rng(
+            faction,
+            params,
+            0x9E3779B97F4A7C15 ^ (faction as u64 + 1).wrapping_mul(0x2545F4914F6CDD1D),
+        )
+    }
+
+    /// 为成对自博弈提供可复现、与阵营编号无关的行为种子。
+    /// 同一 seed 的双方会得到相同的随机序列，便于暴露地图与扫描顺序偏差。
+    pub fn seeded(faction: FactionId, params: AiParams, seed: u64) -> Self {
+        Self::with_rng(
+            faction,
+            params,
+            0x9E3779B97F4A7C15 ^ seed.wrapping_mul(0xD1342543DE82EF95),
+        )
+    }
+
+    fn with_rng(faction: FactionId, params: AiParams, rng: u64) -> Self {
         Self {
             faction,
             // 首次决策在 decision_interval 之后（与旧实现一致；置 0 会让 RNG 序列错位一拍）
             timer: params.decision_interval,
             params,
-            rng: 0x9E3779B97F4A7C15 ^ (faction as u64 + 1).wrapping_mul(0x2545F4914F6CDD1D),
+            rng,
         }
     }
 
@@ -125,8 +167,11 @@ fn decide(
     factions: &[Faction],
 ) -> Option<Intent> {
     let me = c.faction;
-    let my_bases: Vec<&crate::board::BaseInfo> =
-        board.bases.iter().filter(|b| board.owner[b.cell] == me).collect();
+    let my_bases: Vec<&crate::board::BaseInfo> = board
+        .bases
+        .iter()
+        .filter(|b| board.owner[b.cell] == me)
+        .collect();
     if my_bases.is_empty() {
         return None;
     }
@@ -136,38 +181,93 @@ fn decide(
             .iter()
             .find(|(_, s)| s.active && s.faction == me && s.source == source)
     };
+    let threatened = |target: CellIdx| {
+        squads.iter().any(|(_, squad)| {
+            squad.faction != me
+                && squad.mode == SquadMode::ToTarget
+                && squad.path.last() == Some(&target)
+        })
+    };
 
     // ---- 1. 守：据点被敌小队瞄准且驻军不足 → 从最富的己方据点增援 ----
     for b in &my_bases {
-        let threatened = squads.iter().any(|(_, sq)| {
-            sq.faction != me && sq.mode == SquadMode::ToTarget && sq.path.last() == Some(&b.cell)
-        });
-        if threatened && garrison_of(b.cell) < 0.4 * board.base_garrison_cap(b) {
-            if let Some(rich) = my_bases
-                .iter()
-                .filter(|r| r.cell != b.cell)
-                .max_by(|a, c| garrison_of(a.cell).partial_cmp(&garrison_of(c.cell)).unwrap())
-            {
+        if threatened(b.cell) && garrison_of(b.cell) < 0.4 * board.base_garrison_cap(b) {
+            if let Some(rich) = my_bases.iter().filter(|r| r.cell != b.cell).max_by(|a, c| {
+                garrison_of(a.cell)
+                    .partial_cmp(&garrison_of(c.cell))
+                    .unwrap()
+            }) {
                 if garrison_of(rich.cell) > 10.0 {
-                    return Some(Intent::SetStream { faction: me, source: rich.cell, target: b.cell });
+                    return Some(Intent::SetStream {
+                        faction: me,
+                        source: rich.cell,
+                        target: b.cell,
+                    });
                 }
             }
         }
     }
 
+    // 防守增援的目标已经安全时主动停流，避免双向支援趋同后永久占用 AI 的兵流名额。
+    if let Some((_, stream)) = streams.iter().find(|(_, stream)| {
+        if !stream.active || stream.faction != me || board.kind[stream.target] != CellKind::Base {
+            return false;
+        }
+        let Some(target) = board
+            .bases
+            .iter()
+            .find(|base| base.cell == stream.target && board.owner[base.cell] == me)
+        else {
+            return false;
+        };
+        !threatened(target.cell)
+            || garrison_of(target.cell) >= 0.4 * board.base_garrison_cap(target)
+    }) {
+        return Some(Intent::StopStream {
+            faction: me,
+            source: stream.source,
+        });
+    }
+
     // 兵流数已满 → 不再开新战线
-    let active = streams.iter().filter(|(_, s)| s.active && s.faction == me).count();
+    let active = streams
+        .iter()
+        .filter(|(_, s)| s.active && s.faction == me)
+        .count();
     if active >= c.params.max_streams {
         return None;
     }
 
-    let strongest = |exclude: Option<CellIdx>| {
+    // 对指定目标选择前线出发点：先避免途经己方据点被截留，再选择更短路径，最后比较驻军。
+    let source_for = |target: CellIdx, minimum_garrison: f32| {
+        let route_rank = |source: CellIdx| {
+            board
+                .find_path(source, target, me)
+                .map(|path| {
+                    let friendly_hubs = path
+                        .iter()
+                        .skip(1)
+                        .take(path.len().saturating_sub(2))
+                        .filter(|&&cell| {
+                            board.kind[cell] == CellKind::Base && board.owner[cell] == me
+                        })
+                        .count();
+                    (friendly_hubs, path.len())
+                })
+                .unwrap_or((usize::MAX, usize::MAX))
+        };
         my_bases
             .iter()
-            .filter(|b| Some(b.cell) != exclude)
             // 已有兵流的据点不开第二条
             .filter(|b| stream_from(b.cell).is_none())
-            .max_by(|a, cc| garrison_of(a.cell).partial_cmp(&garrison_of(cc.cell)).unwrap())
+            .filter(|b| garrison_of(b.cell) > minimum_garrison)
+            .min_by(|a, cc| {
+                route_rank(a.cell).cmp(&route_rank(cc.cell)).then_with(|| {
+                    garrison_of(cc.cell)
+                        .partial_cmp(&garrison_of(a.cell))
+                        .unwrap()
+                })
+            })
             .copied()
     };
 
@@ -179,10 +279,12 @@ fn decide(
         {
             let mid = ps.path[ps.path.len() / 2];
             if board.owner[mid] != me {
-                if let Some(src) = strongest(None) {
-                    if garrison_of(src.cell) > 30.0 {
-                        return Some(Intent::SetStream { faction: me, source: src.cell, target: mid });
-                    }
+                if let Some(src) = source_for(mid, 30.0) {
+                    return Some(Intent::SetStream {
+                        faction: me,
+                        source: src.cell,
+                        target: mid,
+                    });
                 }
             }
         }
@@ -190,17 +292,29 @@ fn decide(
 
     // ---- 2. 吃产能：占领自己据点的未占领关联地块 ----
     let mut sorted = my_bases.clone();
-    sorted.sort_by(|a, cc| garrison_of(cc.cell).partial_cmp(&garrison_of(a.cell)).unwrap());
+    sorted.sort_by(|a, cc| {
+        garrison_of(cc.cell)
+            .partial_cmp(&garrison_of(a.cell))
+            .unwrap()
+    });
     for b in sorted {
         if stream_from(b.cell).is_some() {
             continue; // 这个据点已经在干活
         }
-        let mut targets: Vec<CellIdx> =
-            b.linked.iter().copied().filter(|&t| board.owner[t] != me).collect();
+        let mut targets: Vec<CellIdx> = b
+            .linked
+            .iter()
+            .copied()
+            .filter(|&t| board.owner[t] != me)
+            .collect();
         targets.sort_by(|&a, &cc| garrison_of(a).partial_cmp(&garrison_of(cc)).unwrap());
         if let Some(&t) = targets.first() {
             if garrison_of(b.cell) > garrison_of(t) * c.params.attack_threshold {
-                return Some(Intent::SetStream { faction: me, source: b.cell, target: t });
+                return Some(Intent::SetStream {
+                    faction: me,
+                    source: b.cell,
+                    target: t,
+                });
             }
         }
     }
@@ -212,10 +326,13 @@ fn decide(
             if board.owner[b.cell] != NEUTRAL {
                 continue;
             }
-            if let Some(src) = strongest(None) {
-                if garrison_of(src.cell) > garrison_of(b.cell) * c.params.attack_threshold {
-                    return Some(Intent::SetStream { faction: me, source: src.cell, target: b.cell });
-                }
+            let minimum = garrison_of(b.cell) * c.params.attack_threshold;
+            if let Some(src) = source_for(b.cell, minimum) {
+                return Some(Intent::SetStream {
+                    faction: me,
+                    source: src.cell,
+                    target: b.cell,
+                });
             }
         }
     }
@@ -228,10 +345,13 @@ fn decide(
             }
             for &t in &eb.linked {
                 if board.owner[t] == eo {
-                    if let Some(src) = strongest(None) {
-                        if garrison_of(src.cell) > garrison_of(t) * c.params.attack_threshold {
-                            return Some(Intent::SetStream { faction: me, source: src.cell, target: t });
-                        }
+                    let minimum = garrison_of(t) * c.params.attack_threshold;
+                    if let Some(src) = source_for(t, minimum) {
+                        return Some(Intent::SetStream {
+                            faction: me,
+                            source: src.cell,
+                            target: t,
+                        });
                     }
                 }
             }
@@ -257,14 +377,23 @@ fn decide(
             .bases
             .iter()
             .filter(|b| board.owner[b.cell] == e)
-            .min_by(|a, cc| garrison_of(a.cell).partial_cmp(&garrison_of(cc.cell)).unwrap());
-        if let (Some(src), Some(tgt)) = (strongest(None), weakest_enemy_base) {
+            .min_by(|a, cc| {
+                garrison_of(a.cell)
+                    .partial_cmp(&garrison_of(cc.cell))
+                    .unwrap()
+            });
+        if let Some(tgt) = weakest_enemy_base {
+            let src = source_for(tgt.cell, 30.0)?;
             let cap = board.base_garrison_cap(src);
             let saturated = garrison_of(src.cell) >= 0.95 * cap;
             let dominant = my_total > enemy_total * c.params.total_attack_ratio;
             let all_in = saturated && my_total >= enemy_total * 0.9;
-            if (dominant || all_in) && garrison_of(src.cell) > 30.0 {
-                return Some(Intent::SetStream { faction: me, source: src.cell, target: tgt.cell });
+            if dominant || all_in {
+                return Some(Intent::SetStream {
+                    faction: me,
+                    source: src.cell,
+                    target: tgt.cell,
+                });
             }
         }
     }
@@ -272,13 +401,21 @@ fn decide(
 }
 
 /// 阵营总兵力 = 据点驻军 + 在途小队（Board 版，AI 评估用）
-pub(crate) fn total_troops_board(board: &Board, squads: &[(Entity, Squad)], faction: FactionId) -> f32 {
+pub(crate) fn total_troops_board(
+    board: &Board,
+    squads: &[(Entity, Squad)],
+    faction: FactionId,
+) -> f32 {
     let garrison: f32 = board
         .bases
         .iter()
         .filter(|b| board.owner[b.cell] == faction)
         .map(|b| board.garrison[b.cell])
         .sum();
-    let transit: f32 = squads.iter().filter(|(_, s)| s.faction == faction).map(|(_, s)| s.troops).sum();
+    let transit: f32 = squads
+        .iter()
+        .filter(|(_, s)| s.faction == faction)
+        .map(|(_, s)| s.troops)
+        .sum();
     garrison + transit
 }

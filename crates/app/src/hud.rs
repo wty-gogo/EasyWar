@@ -12,7 +12,7 @@ pub fn update_hud(
     squads: Query<&Squad>,
     mut q: Query<&mut Text2d, With<HudText>>,
 ) {
-    let Ok(mut text) = q.get_single_mut() else {
+    let Ok(mut text) = q.single_mut() else {
         return; // 棋盘渲染实体尚未生成
     };
     let active = streams.iter().filter(|s| s.active).count();

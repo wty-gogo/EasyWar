@@ -5,14 +5,19 @@ edition = "2021"
 
 [dependencies]
 easywar-logic = { path = "../logic" }
-bevy = { version = "0.15", default-features = false, features = [
+bevy = { version = "0.19", default-features = false, features = [
   "bevy_winit",
   "bevy_render",
   "bevy_core_pipeline",
   "bevy_sprite",
+  "bevy_sprite_render",
   "bevy_text",
   "bevy_state",
   "bevy_ui",
   "bevy_gizmos",
+  "bevy_gizmos_render",
+  "bevy_log",
   "multi_threaded",
 ] }
+# 让 icu_provider（parley 断行）的告警走 log facade，默认是 eprintln 直出无法过滤
+icu_provider = { version = "2", features = ["logging"] }

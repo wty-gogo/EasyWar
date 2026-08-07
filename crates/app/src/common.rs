@@ -16,6 +16,31 @@ pub const DIFFICULTIES: [(&str, fn() -> AiParams); 3] = [
     ("困难", AiParams::hard),
 ];
 
+#[derive(Clone, Copy)]
+pub struct MapChoice {
+    pub name: &'static str,
+    pub file: &'static str,
+}
+
+pub const MAPS: [MapChoice; 4] = [
+    MapChoice {
+        name: "经典 H",
+        file: "h_1v1.toml",
+    },
+    MapChoice {
+        name: "双线梯形",
+        file: "dual_ladder_1v1.toml",
+    },
+    MapChoice {
+        name: "编织双环",
+        file: "braided_rings_1v1.toml",
+    },
+    MapChoice {
+        name: "外环横梁·实验",
+        file: "ring_chord_1v1.toml",
+    },
+];
+
 // ---------- 状态机 ----------
 
 #[derive(States, Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -35,6 +60,22 @@ pub struct SubjectList(pub Vec<SubjectDef>);
 pub struct MenuSelection {
     pub subject: usize,
     pub difficulty: usize,
+    pub map: usize,
+}
+
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputMode {
+    Desktop,
+    Touch,
+}
+
+impl InputMode {
+    pub fn from_environment() -> Self {
+        match std::env::var("EASYWAR_INPUT").as_deref() {
+            Ok("touch") => Self::Touch,
+            _ => Self::Desktop,
+        }
+    }
 }
 
 #[derive(Resource)]
@@ -93,6 +134,7 @@ pub struct MenuButton {
 pub enum MenuAction {
     Subject(usize),
     Difficulty(usize),
+    Map(usize),
     Start,
 }
 

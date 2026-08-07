@@ -66,7 +66,10 @@ fn cell_label(app: &mut App, idx: CellIdx) -> Option<String> {
 fn base_cell(app: &mut App, subject_id: &str) -> CellIdx {
     let (lookup, bases): (GridLookup, BaseList) = {
         let w = app.world_mut();
-        (w.resource::<GridLookup>().clone(), w.resource::<BaseList>().clone())
+        (
+            w.resource::<GridLookup>().clone(),
+            w.resource::<BaseList>().clone(),
+        )
     };
     for (i, &e) in lookup.cells.iter().enumerate() {
         if bases.0.contains(&e) {
@@ -91,7 +94,14 @@ fn squad_count(app: &mut App) -> usize {
 }
 
 fn set_stream(app: &mut App, faction: FactionId, source: CellIdx, target: CellIdx) -> bool {
-    dispatch_intent(app.world_mut(), Intent::SetStream { faction, source, target })
+    dispatch_intent(
+        app.world_mut(),
+        Intent::SetStream {
+            faction,
+            source,
+            target,
+        },
+    )
 }
 
 // ---------- 地图与生产 ----------
@@ -103,7 +113,11 @@ fn map_loads() {
     let lookup = w.resource::<GridLookup>().clone();
     assert_eq!(lookup.width, 14);
     assert_eq!(lookup.height, 13);
-    assert_eq!(w.resource::<BaseList>().0.len(), 6, "2 对阵据点 + 4 中立要塞");
+    assert_eq!(
+        w.resource::<BaseList>().0.len(),
+        6,
+        "2 对阵据点 + 4 中立要塞"
+    );
     assert_eq!(w.resource::<Factions>().0.len(), 2, "player + ai");
     let mut linked = 0;
     let mut plain = 0;
@@ -112,24 +126,61 @@ fn map_loads() {
             CellKind::LinkedTile => {
                 linked += 1;
                 assert_eq!(owner(&mut app, i), NEUTRAL);
-                assert!((21.0..=24.0).contains(&garrison(&mut app, i)), "防御值应在 21~24");
+                assert!(
+                    (21.0..=24.0).contains(&garrison(&mut app, i)),
+                    "防御值应在 21~24"
+                );
             }
             CellKind::Plain => plain += 1,
             _ => {}
         }
         if let Some(l) = cell_label(&mut app, i) {
-            assert!(l.chars().count() <= 2 || cell_kind(&mut app, i) == CellKind::Base);
+            assert!(l.chars().count() <= 4 || cell_kind(&mut app, i) == CellKind::Base);
         }
     }
     assert_eq!(linked, 24, "关联地块 4×6 = 24");
     assert_eq!(plain, 0, "v2 地图没有普通地块");
 }
 
+/// 关联地块标签：每局从所属学科词库随机抽取，同一据点内不重复
+#[test]
+fn linked_tile_labels_drawn_from_subject_pool_without_repeats() {
+    let mut app = build();
+    let subjects = load_subjects(&assets_dir().join("subjects")).expect("词库加载失败");
+    for sid in [
+        "chinese",
+        "math",
+        "chemistry",
+        "music",
+        "physics",
+        "geography",
+    ] {
+        let pool = &subjects[sid].knowledge_points;
+        let labels: Vec<String> = base_linked(&mut app, sid)
+            .into_iter()
+            .map(|ci| cell_label(&mut app, ci).expect("关联地块应有标签"))
+            .collect();
+        assert_eq!(labels.len(), 4);
+        assert!(
+            labels.iter().all(|l| pool.contains(l)),
+            "{sid} 标签须全部来自词库"
+        );
+        let mut dedup = labels.clone();
+        dedup.sort();
+        dedup.dedup();
+        assert_eq!(dedup.len(), labels.len(), "{sid} 同一据点内标签不应重复");
+    }
+}
+
 #[test]
 fn production_scales_with_linked_tiles() {
     let mut app = build();
     let player_base = base_cell(&mut app, "chinese");
-    assert_eq!(base_production(app.world_mut(), player_base), 2.5, "初始无关联地块，仅基础产能");
+    assert_eq!(
+        base_production(app.world_mut(), player_base),
+        2.5,
+        "初始无关联地块，仅基础产能"
+    );
     // 占领一块关联地块 → +0.2
     let tile = base_linked(&mut app, "chinese")[0];
     set_owner(&mut app, tile, 1);
@@ -212,7 +263,10 @@ fn base_capture_turns_stream_into_reinforcement() {
     assert!(geo_taken, "第一段应拿下中途要塞");
     assert_eq!(owner(&mut app, enemy), 1, "第二段应攻下敌方据点");
     // 占领后兵流继续（增援流），直到驻军归零
-    assert!(stream_from(app.world_mut(), 1, geo).is_some(), "据点被占领后兵流应继续输送");
+    assert!(
+        stream_from(app.world_mut(), 1, geo).is_some(),
+        "据点被占领后兵流应继续输送"
+    );
     assert_eq!(app.world_mut().resource::<Winner>().0, Some(1));
 }
 
@@ -252,9 +306,16 @@ fn win_condition() {
     let cells: Vec<CellIdx> = {
         let (lookup, bases) = {
             let w = app.world_mut();
-            (w.resource::<GridLookup>().clone(), w.resource::<BaseList>().clone())
+            (
+                w.resource::<GridLookup>().clone(),
+                w.resource::<BaseList>().clone(),
+            )
         };
-        bases.0.iter().map(|e| lookup.cells.iter().position(|c| c == e).unwrap()).collect()
+        bases
+            .0
+            .iter()
+            .map(|e| lookup.cells.iter().position(|c| c == e).unwrap())
+            .collect()
     };
     for c in cells {
         set_owner(&mut app, c, 1);
@@ -272,7 +333,76 @@ fn stream_stops_when_garrison_hits_zero() {
     assert!(set_stream(&mut app, 1, source, target));
     // 模拟 3 秒：驻军应被抽干，兵流自动终止
     tick_secs(&mut app, 3.0);
-    assert!(stream_from(app.world_mut(), 1, source).is_none(), "驻军归零后兵流应立即停止");
+    assert!(
+        stream_from(app.world_mut(), 1, source).is_none(),
+        "驻军归零后兵流应立即停止"
+    );
+}
+
+#[test]
+fn stream_recomputes_wave_troops_from_current_garrison() {
+    let mut app = build();
+    let source = base_cell(&mut app, "chinese");
+    let target = base_cell(&mut app, "math");
+    set_garrison(&mut app, source, 80.0);
+    assert!(set_stream(&mut app, 1, source, target));
+
+    // 0.2 秒后的第一波应按 80 驻军计算为 4 兵，而不是旧规则的固定 3 兵。
+    tick_secs(&mut app, 0.21);
+    let mut squads = app.world_mut().query::<&Squad>();
+    let troops: Vec<f32> = squads
+        .iter(app.world_mut())
+        .filter(|squad| squad.faction == 1)
+        .map(|squad| squad.troops)
+        .collect();
+    assert_eq!(troops, vec![4.0]);
+}
+
+#[test]
+fn redirect_resets_fractional_troop_carry() {
+    let mut app = build();
+    let source = base_cell(&mut app, "chinese");
+    let first_target = base_cell(&mut app, "math");
+    let second_target = base_linked(&mut app, "chinese")[0];
+    set_garrison(&mut app, source, 60.0);
+    assert!(set_stream(&mut app, 1, source, first_target));
+
+    tick_secs(&mut app, 0.21);
+    let old_stream = stream_from(app.world_mut(), 1, source).expect("兵流应保持活跃");
+    assert!(old_stream.troop_carry > 0.0, "首波后应留下小数额度");
+
+    assert!(set_stream(&mut app, 1, source, second_target));
+    let new_stream = stream_from(app.world_mut(), 1, source).expect("改道后应建立新兵流");
+    assert_eq!(new_stream.target, second_target);
+    assert_eq!(new_stream.troop_carry, 0.0, "改道不继承旧兵流的小数额度");
+}
+
+#[test]
+fn reciprocal_reinforcement_reduces_garrison_difference() {
+    let mut app = build();
+    let rich = base_cell(&mut app, "chinese");
+    let poor = base_cell(&mut app, "physics");
+    set_owner(&mut app, poor, 1);
+
+    // 清理两座据点之间的唯一通路，让测试只观察双向支援，不引入沿途战斗。
+    let path = find_path(app.world_mut(), rich, poor, 1).expect("友方据点之间应有通路");
+    for &cell in path.iter().skip(1).take(path.len().saturating_sub(2)) {
+        set_owner(&mut app, cell, 1);
+        set_garrison(&mut app, cell, 0.0);
+    }
+
+    set_garrison(&mut app, rich, 120.0);
+    set_garrison(&mut app, poor, 40.0);
+    let initial_difference = (garrison(&mut app, rich) - garrison(&mut app, poor)).abs();
+    assert!(set_stream(&mut app, 1, rich, poor));
+    assert!(set_stream(&mut app, 1, poor, rich));
+
+    tick_secs(&mut app, 10.0);
+    let final_difference = (garrison(&mut app, rich) - garrison(&mut app, poor)).abs();
+    assert!(
+        final_difference < initial_difference,
+        "双向支援应缩小驻军差：初始 {initial_difference}，最终 {final_difference}"
+    );
 }
 
 // ---------- M2: AI 测试 ----------
@@ -281,7 +411,10 @@ fn stream_stops_when_garrison_hits_zero() {
 fn ai_captures_linked_tiles() {
     let mut app = build();
     app.world_mut()
-        .insert_resource(AiControllers(vec![AiController::new(2, AiParams::normal())]));
+        .insert_resource(AiControllers(vec![AiController::new(
+            2,
+            AiParams::normal(),
+        )]));
     tick_secs(&mut app, 120.0);
     // AI（数学）应在 120 秒内吃掉自己至少一块关联地块
     let linked = base_linked(&mut app, "math");
@@ -297,7 +430,10 @@ fn ai_launches_total_attack_when_dominant() {
     let all_bases: Vec<(CellIdx, Vec<CellIdx>, String)> = {
         let (lookup, bases) = {
             let w = app.world_mut();
-            (w.resource::<GridLookup>().clone(), w.resource::<BaseList>().clone())
+            (
+                w.resource::<GridLookup>().clone(),
+                w.resource::<BaseList>().clone(),
+            )
         };
         bases
             .0
@@ -320,7 +456,10 @@ fn ai_launches_total_attack_when_dominant() {
     let math = base_cell(&mut app, "math");
     set_garrison(&mut app, math, 120.0);
     app.world_mut()
-        .insert_resource(AiControllers(vec![AiController::new(2, AiParams::normal())]));
+        .insert_resource(AiControllers(vec![AiController::new(
+            2,
+            AiParams::normal(),
+        )]));
 
     // 30 秒内 AI 应建立目标为玩家格子的兵流
     let mut attacked_player = false;
@@ -342,12 +481,96 @@ fn ai_launches_total_attack_when_dominant() {
 }
 
 #[test]
+fn ai_uses_forward_base_when_rear_route_would_be_intercepted() {
+    let mut app = build();
+    let music = base_cell(&mut app, "music");
+    let geography = base_cell(&mut app, "geography");
+    let all_bases: Vec<(CellIdx, Vec<CellIdx>, String)> = {
+        let (lookup, bases) = {
+            let world = app.world_mut();
+            (
+                world.resource::<GridLookup>().clone(),
+                world.resource::<BaseList>().clone(),
+            )
+        };
+        bases
+            .0
+            .iter()
+            .map(|&entity| {
+                let cell = lookup
+                    .cells
+                    .iter()
+                    .position(|candidate| *candidate == entity)
+                    .unwrap();
+                let base = app.world_mut().get::<Base>(entity).unwrap();
+                (cell, base.linked.clone(), base.subject_id.clone())
+            })
+            .collect()
+    };
+
+    // 阵营 2 已占领除音乐外的右路和横梁据点，所有候选驻军相同。
+    // 从后方据点前往音乐会途经己方据点，地理则能直接抵达。
+    for (cell, linked, subject) in &all_bases {
+        match subject.as_str() {
+            "chinese" => {}
+            "music" => {
+                set_owner(&mut app, *cell, NEUTRAL);
+                set_garrison(&mut app, *cell, 40.0);
+            }
+            _ => {
+                set_owner(&mut app, *cell, 2);
+                set_garrison(&mut app, *cell, 120.0);
+                for &tile in linked {
+                    set_owner(&mut app, tile, 2);
+                }
+            }
+        }
+    }
+    app.world_mut()
+        .insert_resource(AiControllers(vec![AiController::new(
+            2,
+            AiParams::normal(),
+        )]));
+
+    tick_secs(&mut app, 3.0);
+    let stream = stream_from(app.world_mut(), 2, geography).expect("AI 应从地理前线据点出兵");
+    assert_eq!(stream.target, music);
+}
+
+#[test]
+fn ai_stops_reinforcement_when_friendly_target_is_safe() {
+    let mut app = build();
+    let source = base_cell(&mut app, "physics");
+    let target = base_cell(&mut app, "chemistry");
+    set_owner(&mut app, source, 2);
+    set_owner(&mut app, target, 2);
+    set_garrison(&mut app, source, 120.0);
+    set_garrison(&mut app, target, 120.0);
+    assert!(set_stream(&mut app, 2, source, target));
+    app.world_mut()
+        .insert_resource(AiControllers(vec![AiController::new(
+            2,
+            AiParams::normal(),
+        )]));
+
+    tick_secs(&mut app, 3.0);
+    assert!(
+        stream_from(app.world_mut(), 2, source).is_none(),
+        "目标安全后 AI 应释放防守增援兵流"
+    );
+}
+
+#[test]
 fn ai_eventually_beats_passive_player() {
     let mut app = build();
     app.world_mut()
         .insert_resource(AiControllers(vec![AiController::new(2, AiParams::hard())]));
     tick_secs(&mut app, 600.0);
-    assert_eq!(app.world_mut().resource::<Winner>().0, Some(2), "困难 AI 应能在 10 分钟内击败挂机玩家");
+    assert_eq!(
+        app.world_mut().resource::<Winner>().0,
+        Some(2),
+        "困难 AI 应能在 10 分钟内击败挂机玩家"
+    );
 }
 
 #[test]
@@ -355,7 +578,7 @@ fn stopped_stream_squads_reach_target_before_returning() {
     let mut app = build();
     let source = base_cell(&mut app, "chinese");
     let target = base_linked(&mut app, "chinese")[0]; // 相邻关联地块 (2,10)
-    // 兵力刚好：能打掉地块但驻军会被抽干 → 触发"归零停兵"
+                                                      // 兵力刚好：能打掉地块但驻军会被抽干 → 触发"归零停兵"
     let def = garrison(&mut app, target);
     set_garrison(&mut app, source, def + 6.0);
     assert!(set_stream(&mut app, 1, source, target));
@@ -391,7 +614,10 @@ fn reinforcement_stream_stops_at_zero_too() {
 
     // 模拟 10 秒：驻军抽到 0，增援流同样应终止（唯一停止条件 = 兵力归零）
     tick_secs(&mut app, 10.0);
-    assert!(stream_from(app.world_mut(), 1, source).is_none(), "增援流在驻军归零后也应终止");
+    assert!(
+        stream_from(app.world_mut(), 1, source).is_none(),
+        "增援流在驻军归零后也应终止"
+    );
     // 但已派出的兵应抵达并入驻军
     let in_fort = garrison(&mut app, fort) > 0.0;
     let in_transit = {
@@ -405,7 +631,7 @@ fn reinforcement_stream_stops_at_zero_too() {
 fn squads_enter_friendly_base_on_collision() {
     let mut app = build();
     let source = base_cell(&mut app, "chinese"); // 语文 (2,11)
-    // 玩家拿下物理要塞 (2,6) 作为中途枢纽
+                                                 // 玩家拿下物理要塞 (2,6) 作为中途枢纽
     let fort = base_cell(&mut app, "physics");
     set_owner(&mut app, fort, 1);
     set_garrison(&mut app, fort, 0.0);
@@ -456,5 +682,8 @@ fn capturing_squad_garrisons_base_instead_of_returning() {
         }
     }
     assert!(captured, "应攻下中立要塞");
-    assert!(garrison(&mut app, target) > 0.0, "占领者的剩余兵力应入驻据点");
+    assert!(
+        garrison(&mut app, target) > 0.0,
+        "占领者的剩余兵力应入驻据点"
+    );
 }

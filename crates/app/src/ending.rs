@@ -25,7 +25,11 @@ pub fn enter_ended(mut commands: Commands, asset_server: Res<AssetServer>, info:
     ));
     commands.spawn((
         Text2d::new(title),
-        TextFont { font: bold.clone(), font_size: 64.0, ..default() },
+        TextFont {
+            font: FontSource::Handle(bold.clone()),
+            font_size: 64.0.into(),
+            ..default()
+        },
         TextColor(color),
         Transform::from_xyz(0.0, 120.0, 9.0),
         EndEntity,
@@ -35,13 +39,18 @@ pub fn enter_ended(mut commands: Commands, asset_server: Res<AssetServer>, info:
             "你占领：据点 {} 座 · 地块 {} 块\n对方占领：据点 {} 座 · 地块 {} 块",
             info.player_bases, info.player_tiles, info.enemy_bases, info.enemy_tiles
         )),
-        TextFont { font: font.clone(), font_size: 20.0, ..default() },
+        TextFont {
+            font: FontSource::Handle(font.clone()),
+            font_size: 20.0.into(),
+            ..default()
+        },
         TextColor(Color::srgb(0.85, 0.85, 0.85)),
         Transform::from_xyz(0.0, 30.0, 9.0),
         EndEntity,
     ));
 
-    for (i, (label, restart)) in [("再来一局", true), ("回主菜单", false)].iter().enumerate() {
+    for (i, (label, restart)) in [("再来一局", true), ("回主菜单", false)].iter().enumerate()
+    {
         let center = Vec2::new((i as f32 - 0.5) * 220.0, -80.0);
         let half = Vec2::new(90.0, 28.0);
         commands.spawn((
@@ -52,11 +61,19 @@ pub fn enter_ended(mut commands: Commands, asset_server: Res<AssetServer>, info:
             },
             Transform::from_xyz(center.x, center.y, 9.0),
             EndEntity,
-            EndButton { restart: *restart, center, half },
+            EndButton {
+                restart: *restart,
+                center,
+                half,
+            },
         ));
         commands.spawn((
             Text2d::new(*label),
-            TextFont { font: font.clone(), font_size: 20.0, ..default() },
+            TextFont {
+                font: FontSource::Handle(font.clone()),
+                font_size: 20.0.into(),
+                ..default()
+            },
             TextColor(Color::WHITE),
             Transform::from_xyz(center.x, center.y, 10.0),
             EndEntity,
@@ -74,8 +91,9 @@ pub fn end_input(
     if !buttons.just_pressed(MouseButton::Left) {
         return;
     }
-    let window = windows.single();
-    let (camera, cam_tf) = camera.single();
+    let (Ok(window), Ok((camera, cam_tf))) = (windows.single(), camera.single()) else {
+        return;
+    };
     let Some(w) = window
         .cursor_position()
         .and_then(|p| camera.viewport_to_world_2d(cam_tf, p).ok())
@@ -85,7 +103,11 @@ pub fn end_input(
     for btn in q.iter() {
         let d = w - btn.center;
         if d.x.abs() <= btn.half.x && d.y.abs() <= btn.half.y {
-            next.set(if btn.restart { AppState::Playing } else { AppState::Menu });
+            next.set(if btn.restart {
+                AppState::Playing
+            } else {
+                AppState::Menu
+            });
             return;
         }
     }

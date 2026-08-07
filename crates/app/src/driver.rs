@@ -7,9 +7,21 @@
 use crate::common::*;
 use bevy::prelude::*;
 use easywar_logic::*;
+use std::path::{Path, PathBuf};
 
 /// 每帧最多补跑的 tick 数（防止卡顿后的死亡螺旋）
 const MAX_CATCH_UP: usize = 8;
+
+fn selected_map_path(root: &Path, selected: usize) -> PathBuf {
+    let configured = std::env::var("EASYWAR_MAP")
+        .unwrap_or_else(|_| MAPS.get(selected).unwrap_or(&MAPS[0]).file.to_string());
+    let path = PathBuf::from(configured);
+    if path.is_absolute() {
+        path
+    } else {
+        root.join("maps").join(path)
+    }
+}
 
 pub fn enter_playing(world: &mut World) {
     let selection = world.resource::<MenuSelection>();
@@ -22,11 +34,13 @@ pub fn enter_playing(world: &mut World) {
         .map(|s| s.id.clone())
         .unwrap();
     let difficulty = selection.difficulty;
+    let selected_map = selection.map;
 
     let root = workspace_assets();
+    let map_path = selected_map_path(&root, selected_map);
     spawn_map_custom(
         world,
-        &root.join("maps/h_1v1.toml"),
+        &map_path,
         &root.join("subjects"),
         Some(&player_subject),
         Some(&ai_subject),
@@ -129,7 +143,10 @@ pub fn check_end(
 ) {
     if let Some(w) = winner.0 {
         let count = |f: FactionId, kind: CellKind| {
-            cells.iter().filter(|(k, o)| o.0 == f && **k == kind).count()
+            cells
+                .iter()
+                .filter(|(k, o)| o.0 == f && **k == kind)
+                .count()
         };
         commands.insert_resource(EndInfo {
             winner: w,

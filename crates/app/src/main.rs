@@ -31,9 +31,15 @@ fn main() {
             .set(WindowPlugin {
                 primary_window: Some(Window {
                     title: "EasyWar · 学科对抗".into(),
-                    resolution: WindowResolution::new(900.0, 780.0),
+                    resolution: WindowResolution::new(900, 780),
                     ..default()
                 }),
+                ..default()
+            })
+            // icu_segmenter 缺中日韩断行字典（parley_data 未打包 cjdict），
+            // 回退断行对中文足够用；告警走 log 后在此静音
+            .set(bevy::log::LogPlugin {
+                filter: format!("{},icu_provider=error", bevy::log::DEFAULT_FILTER),
                 ..default()
             }),
     )
@@ -43,7 +49,9 @@ fn main() {
     .insert_resource(MenuSelection {
         subject: 1, // 默认语文
         difficulty: 1,
+        map: 0,
     })
+    .insert_resource(InputMode::from_environment())
     .insert_resource(DragState::default())
     .insert_resource(DebugHud::default())
     .insert_resource(SimAccum::default())
@@ -53,7 +61,10 @@ fn main() {
     // 菜单
     .add_systems(OnEnter(AppState::Menu), menu::enter_menu)
     .add_systems(OnExit(AppState::Menu), cleanup::<MenuEntity>)
-    .add_systems(Update, (menu::menu_input, menu::menu_highlight).run_if(in_state(AppState::Menu)))
+    .add_systems(
+        Update,
+        (menu::menu_input, menu::menu_highlight).run_if(in_state(AppState::Menu)),
+    )
     // 对局
     .add_systems(OnEnter(AppState::Playing), driver::enter_playing)
     .add_systems(OnExit(AppState::Playing), driver::exit_playing)
@@ -62,7 +73,8 @@ fn main() {
         (
             driver::drive_sim,
             driver::check_end,
-            input::handle_input,
+            input::handle_desktop_input.run_if(input::desktop_input_mode),
+            input::handle_touch_input.run_if(input::touch_input_mode),
             input::switch_difficulty,
             render::spawn_board_system,
             render::sync_cells,
@@ -79,7 +91,9 @@ fn main() {
 
     // 冒烟模式：跳过菜单直接开局（AI 接管对手，玩家挂机）
     if std::env::args().any(|a| a == "--auto") {
-        app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Playing);
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::Playing);
     }
     app.run();
 }

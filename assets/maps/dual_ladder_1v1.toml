@@ -1,0 +1,133 @@
+# 双线梯形 · 1v1
+# 左右镜像；上方为短压制线，下方为经济线，中部工程—经济提供换线。
+
+[map]
+name = "双线梯形 · 1v1"
+width = 17
+height = 13
+layout = [
+  ".................",
+  ".................",
+  "....#.......#....",
+  "...###########...",
+  "..###...#...###..",
+  ".##.....#.....##.",
+  "###.....#.....###",
+  ".##.....#.....##.",
+  "..###...#...###..",
+  "...###########...",
+  "....##.###.##....",
+  ".................",
+  ".................",
+]
+
+[[base]]
+subject = "chinese"
+owner = "player"
+pos = [1, 6]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [2, 4] }, { pos = [1, 5] }, { pos = [2, 5] }, { pos = [0, 6] },
+  { pos = [2, 6] }, { pos = [1, 7] }, { pos = [2, 7] }, { pos = [2, 8] },
+]
+
+[[base]]
+subject = "math"
+owner = "ai"
+pos = [15, 6]
+garrison = 20
+production_base = 2.5
+linked_tiles = [
+  { pos = [14, 4] }, { pos = [14, 5] }, { pos = [15, 5] }, { pos = [14, 6] },
+  { pos = [16, 6] }, { pos = [14, 7] }, { pos = [15, 7] }, { pos = [14, 8] },
+]
+
+[[base]]
+subject = "physics"
+owner = "neutral"
+pos = [4, 3]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [4, 2] }, { pos = [3, 3] }, { pos = [5, 3] },
+  { pos = [6, 3] }, { pos = [3, 4] }, { pos = [4, 4] },
+]
+
+[[base]]
+subject = "chemistry"
+owner = "neutral"
+pos = [12, 3]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [12, 2] }, { pos = [10, 3] }, { pos = [11, 3] },
+  { pos = [13, 3] }, { pos = [12, 4] }, { pos = [13, 4] },
+]
+
+[[base]]
+subject = "engineering"
+owner = "neutral"
+pos = [8, 3]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [7, 3] }, { pos = [9, 3] }, { pos = [8, 4] },
+  { pos = [8, 5] }, { pos = [8, 6] },
+]
+
+[[base]]
+subject = "history"
+owner = "neutral"
+pos = [4, 9]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [3, 8] }, { pos = [4, 8] }, { pos = [3, 9] }, { pos = [5, 9] },
+  { pos = [6, 9] }, { pos = [4, 10] }, { pos = [5, 10] },
+]
+
+[[base]]
+subject = "biology"
+owner = "neutral"
+pos = [12, 9]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [12, 8] }, { pos = [13, 8] }, { pos = [10, 9] }, { pos = [11, 9] },
+  { pos = [13, 9] }, { pos = [11, 10] }, { pos = [12, 10] },
+]
+
+[[base]]
+subject = "economics"
+owner = "neutral"
+pos = [8, 9]
+garrison = 40
+production_base = 2.5
+linked_tiles = [
+  { pos = [8, 7] }, { pos = [8, 8] }, { pos = [7, 9] }, { pos = [9, 9] },
+  { pos = [7, 10] }, { pos = [8, 10] }, { pos = [9, 10] },
+]
+
+[neutral]
+defense_min = 21
+defense_max = 24
+beam_defense_min = 21
+beam_defense_max = 24
+seed = 701
+rotational_symmetry = false
+symmetry = "vertical"
+
+[linked_tile]
+defense_min = 21
+defense_max = 24
+production_bonus = 0.2
+
+[rules]
+garrison_cap_base = 80
+garrison_cap_per_tile = 10
+regen_per_sec = 1.0
+squad_interval_sec = 0.2
+squad_max_size = 3
+squad_growth_garrison_step = 40
+squad_move_sec_per_cell = 0.4

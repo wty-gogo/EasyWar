@@ -10,7 +10,11 @@ use bevy_ecs::prelude::*;
 #[derive(Clone, Copy, Debug)]
 pub enum Intent {
     /// 建立/改道兵流（同一源据点只维持一条）
-    SetStream { faction: FactionId, source: CellIdx, target: CellIdx },
+    SetStream {
+        faction: FactionId,
+        source: CellIdx,
+        target: CellIdx,
+    },
     /// 停止兵流，途中兵到目标后回家
     StopStream { faction: FactionId, source: CellIdx },
 }
@@ -38,7 +42,11 @@ pub fn apply_intents(world: &mut World) {
     }
     for intent in intents {
         match intent {
-            Intent::SetStream { faction, source, target } => {
+            Intent::SetStream {
+                faction,
+                source,
+                target,
+            } => {
                 set_stream(world, faction, source, target);
             }
             Intent::StopStream { faction, source } => stop_stream(world, faction, source),
@@ -47,7 +55,12 @@ pub fn apply_intents(world: &mut World) {
 }
 
 /// 建立或改道兵流。逐行移植自旧 model.rs 的 GameState::set_stream。
-pub(crate) fn set_stream(world: &mut World, faction: FactionId, source: CellIdx, target: CellIdx) -> bool {
+pub(crate) fn set_stream(
+    world: &mut World,
+    faction: FactionId,
+    source: CellIdx,
+    target: CellIdx,
+) -> bool {
     let board = Board::load(world);
     if board.kind[source] != CellKind::Base || board.owner[source] != faction {
         return false;
@@ -96,7 +109,16 @@ pub(crate) fn set_stream(world: &mut World, faction: FactionId, source: CellIdx,
     }
 
     let seq = world.resource_mut::<SeqCounter>().next();
-    world.spawn(Stream { faction, source, target, path, spawn_accum: 0.0, active: true, seq });
+    world.spawn(Stream {
+        faction,
+        source,
+        target,
+        path,
+        spawn_accum: 0.0,
+        troop_carry: 0.0,
+        active: true,
+        seq,
+    });
     true
 }
 
@@ -123,7 +145,11 @@ pub(crate) fn stop_stream(world: &mut World, faction: FactionId, source: CellIdx
 
 /// 停用兵流：在途小队**继续飞向目标**，到达后幸存的再返回源据点。
 /// `si` 为按 seq 排序后的下标。
-pub(crate) fn recall_stream(streams: &mut [(Entity, Stream)], squads: &mut [(Entity, Squad)], si: usize) {
+pub(crate) fn recall_stream(
+    streams: &mut [(Entity, Stream)],
+    squads: &mut [(Entity, Squad)],
+    si: usize,
+) {
     let entity = streams[si].0;
     streams[si].1.active = false;
     for (_, sq) in squads.iter_mut() {

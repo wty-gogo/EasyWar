@@ -1,8 +1,29 @@
-//! 玩家输入：拖拽/框选/点击 → 发 Intent（唯一的玩家写入口）、难度切换。
+//! 玩家输入：桌面点击/框选与触屏拖拽分别转成 Intent；难度切换。
 
 use crate::common::*;
 use bevy::prelude::*;
 use easywar_logic::*;
+use std::collections::HashSet;
+
+const BOX_THRESHOLD: f32 = 12.0;
+
+#[derive(Debug)]
+enum DesktopClickPlan {
+    Select(CellIdx),
+    Toggle(CellIdx),
+    Send(Vec<Intent>),
+    Stop(CellIdx),
+    Clear,
+    NeedSource,
+}
+
+pub fn desktop_input_mode(mode: Res<InputMode>) -> bool {
+    *mode == InputMode::Desktop
+}
+
+pub fn touch_input_mode(mode: Res<InputMode>) -> bool {
+    *mode == InputMode::Touch
+}
 
 fn world_to_cell(world: Vec2, lookup: &GridLookup, cells: &Query<&CellKind>) -> Option<CellIdx> {
     let origin = grid_origin(lookup);
@@ -15,13 +36,246 @@ fn world_to_cell(world: Vec2, lookup: &GridLookup, cells: &Query<&CellKind>) -> 
     if (fx - x as f32).abs() > 0.5 || (fy - y as f32).abs() > 0.5 {
         return None;
     }
-    let i = lookup.idx(x as usize, y as usize);
-    let kind = cells.get(lookup.entity(i)).ok()?;
-    kind.enterable().then_some(i)
+    let cell = lookup.idx(x as usize, y as usize);
+    cells
+        .get(lookup.entity(cell))
+        .ok()?
+        .enterable()
+        .then_some(cell)
+}
+
+fn set_stream_intents(selected: &HashSet<CellIdx>, target: CellIdx) -> Vec<Intent> {
+    let mut sources: Vec<CellIdx> = selected
+        .iter()
+        .copied()
+        .filter(|&source| source != target)
+        .collect();
+    sources.sort_unstable();
+    sources
+        .into_iter()
+        .map(|source| Intent::SetStream {
+            faction: PLAYER,
+            source,
+            target,
+        })
+        .collect()
+}
+
+fn desktop_click_plan(
+    selected: &HashSet<CellIdx>,
+    target: CellIdx,
+    own_base: bool,
+    shift: bool,
+    active_stream: bool,
+) -> DesktopClickPlan {
+    if shift && own_base {
+        return DesktopClickPlan::Toggle(target);
+    }
+    if selected.is_empty() {
+        return if own_base {
+            DesktopClickPlan::Select(target)
+        } else {
+            DesktopClickPlan::NeedSource
+        };
+    }
+    if selected.len() == 1 && selected.contains(&target) {
+        return if active_stream {
+            DesktopClickPlan::Stop(target)
+        } else {
+            DesktopClickPlan::Clear
+        };
+    }
+    DesktopClickPlan::Send(set_stream_intents(selected, target))
+}
+
+fn push_stream_intents(
+    intents: &mut IntentQueue,
+    selected: &HashSet<CellIdx>,
+    target: CellIdx,
+) -> usize {
+    let commands = set_stream_intents(selected, target);
+    let count = commands.len();
+    for command in commands {
+        intents.push(command);
+    }
+    count
+}
+
+fn toggle_selection(selected: &mut HashSet<CellIdx>, cell: CellIdx) {
+    if !selected.insert(cell) {
+        selected.remove(&cell);
+    }
+}
+
+fn active_stream_from(streams: &Query<&Stream>, source: CellIdx) -> bool {
+    streams
+        .iter()
+        .any(|stream| stream.active && stream.faction == PLAYER && stream.source == source)
+}
+
+fn select_bases_in_rect(
+    selected: &mut HashSet<CellIdx>,
+    from: Vec2,
+    to: Vec2,
+    append: bool,
+    lookup: &GridLookup,
+    kinds: &Query<&CellKind>,
+    owners: &Query<&Owner>,
+) {
+    if !append {
+        selected.clear();
+    }
+    let min = from.min(to);
+    let max = from.max(to);
+    let origin = grid_origin(lookup);
+    for (cell, &entity) in lookup.cells.iter().enumerate() {
+        let (Ok(kind), Ok(owner)) = (kinds.get(entity), owners.get(entity)) else {
+            continue;
+        };
+        let position = cell_pos(lookup, origin, cell);
+        if *kind == CellKind::Base
+            && owner.0 == PLAYER
+            && position.x >= min.x
+            && position.x <= max.x
+            && position.y >= min.y
+            && position.y <= max.y
+        {
+            selected.insert(cell);
+        }
+    }
+}
+
+fn draw_selection_box(from: Option<Vec2>, cursor: Option<Vec2>, gizmos: &mut Gizmos) {
+    let (Some(from), Some(cursor)) = (from, cursor) else {
+        return;
+    };
+    if (cursor - from).length() > BOX_THRESHOLD {
+        gizmos.rect_2d(
+            Isometry2d::from_translation((from + cursor) / 2.0),
+            (cursor - from).abs(),
+            Color::srgba(1.0, 0.85, 0.2, 0.6),
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn handle_input(
+pub fn handle_desktop_input(
+    mut intents: ResMut<IntentQueue>,
+    mut pointer: ResMut<DragState>,
+    mut hud: ResMut<DebugHud>,
+    lookup: Res<GridLookup>,
+    kinds: Query<&CellKind>,
+    owners: Query<&Owner>,
+    streams: Query<&Stream>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
+    windows: Query<&Window>,
+    camera: Query<(&Camera, &GlobalTransform)>,
+    mut gizmos: Gizmos,
+) {
+    let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera.single()) else {
+        return;
+    };
+    let cursor = window
+        .cursor_position()
+        .and_then(|position| camera.viewport_to_world_2d(camera_transform, position).ok());
+    let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+
+    if keyboard.just_pressed(KeyCode::Escape) || buttons.just_pressed(MouseButton::Right) {
+        pointer.selected.clear();
+        pointer.press_pos = None;
+        hud.last_event = "已取消选择".into();
+    }
+
+    if buttons.just_pressed(MouseButton::Left) {
+        pointer.press_pos = cursor;
+    }
+    draw_selection_box(pointer.press_pos, cursor, &mut gizmos);
+
+    if !buttons.just_released(MouseButton::Left) {
+        return;
+    }
+    let Some(press) = pointer.press_pos.take() else {
+        return;
+    };
+    let Some(release) = cursor else {
+        pointer.selected.clear();
+        hud.last_event = "释放在窗口外，已取消选择".into();
+        return;
+    };
+
+    if (release - press).length() > BOX_THRESHOLD {
+        select_bases_in_rect(
+            &mut pointer.selected,
+            press,
+            release,
+            shift,
+            &lookup,
+            &kinds,
+            &owners,
+        );
+        hud.last_event = format!("框选 {} 个据点", pointer.selected.len());
+        return;
+    }
+
+    let Some(target) = world_to_cell(release, &lookup, &kinds) else {
+        if !shift {
+            pointer.selected.clear();
+        }
+        hud.last_event = "点击地图外，已取消选择".into();
+        return;
+    };
+    let entity = lookup.entity(target);
+    let kind = *kinds.get(entity).expect("可进入格缺少 CellKind");
+    let owner = owners.get(entity).expect("可进入格缺少 Owner").0;
+    let own_base = kind == CellKind::Base && owner == PLAYER;
+
+    let plan = desktop_click_plan(
+        &pointer.selected,
+        target,
+        own_base,
+        shift,
+        active_stream_from(&streams, target),
+    );
+    match plan {
+        DesktopClickPlan::Select(source) => {
+            pointer.selected.clear();
+            pointer.selected.insert(source);
+            hud.last_event = format!("已选中 {:?}，再点击目标地块派兵", lookup.xy(source));
+        }
+        DesktopClickPlan::Toggle(source) => {
+            toggle_selection(&mut pointer.selected, source);
+            hud.last_event = format!("已选择 {} 个据点", pointer.selected.len());
+        }
+        DesktopClickPlan::Send(commands) => {
+            let count = commands.len();
+            for command in commands {
+                intents.push(command);
+            }
+            pointer.selected.clear();
+            hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
+        }
+        DesktopClickPlan::Stop(source) => {
+            intents.push(Intent::StopStream {
+                faction: PLAYER,
+                source,
+            });
+            pointer.selected.clear();
+            hud.last_event = format!("停止 {:?} 的兵流", lookup.xy(source));
+        }
+        DesktopClickPlan::Clear => {
+            pointer.selected.clear();
+            hud.last_event = "已取消选择".into();
+        }
+        DesktopClickPlan::NeedSource => {
+            hud.last_event = "请先选择己方据点".into();
+        }
+    }
+}
+
+/// 未来触屏端使用的原始拖拽交互。桌面端默认不运行；设置 `EASYWAR_INPUT=touch` 可测试。
+#[allow(clippy::too_many_arguments)]
+pub fn handle_touch_input(
     mut intents: ResMut<IntentQueue>,
     mut drag: ResMut<DragState>,
     mut hud: ResMut<DebugHud>,
@@ -35,11 +289,12 @@ pub fn handle_input(
     camera: Query<(&Camera, &GlobalTransform)>,
     mut gizmos: Gizmos,
 ) {
-    let window = windows.single();
-    let (camera, cam_tf) = camera.single();
-    let cursor_world = window
+    let (Ok(window), Ok((camera, camera_transform))) = (windows.single(), camera.single()) else {
+        return;
+    };
+    let cursor = window
         .cursor_position()
-        .and_then(|p| camera.viewport_to_world_2d(cam_tf, p).ok());
+        .and_then(|position| camera.viewport_to_world_2d(camera_transform, position).ok());
     let shift = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
     if keyboard.just_pressed(KeyCode::Escape) {
@@ -48,108 +303,85 @@ pub fn handle_input(
     }
 
     if buttons.just_pressed(MouseButton::Left) {
-        match cursor_world.and_then(|w| world_to_cell(w, &lookup, &kinds)) {
-            Some(i) => {
-                let kind = *kinds.get(lookup.entity(i)).unwrap();
-                let owner = owners.get(lookup.entity(i)).unwrap().0;
-                hud.last_event = format!("按下命中 {:?} kind={:?} owner={}", lookup.xy(i), kind, owner);
+        match cursor.and_then(|world| world_to_cell(world, &lookup, &kinds)) {
+            Some(cell) => {
+                let kind = *kinds.get(lookup.entity(cell)).expect("格子缺少 CellKind");
+                let owner = owners.get(lookup.entity(cell)).expect("格子缺少 Owner").0;
                 if kind == CellKind::Base && owner == PLAYER {
                     if shift {
-                        if !drag.selected.insert(i) {
-                            drag.selected.remove(&i);
-                        }
+                        toggle_selection(&mut drag.selected, cell);
                         hud.last_event = format!("多选：{} 个据点", drag.selected.len());
                     } else {
-                        drag.dragging = Some(i);
-                        if !drag.selected.contains(&i) {
+                        drag.dragging = Some(cell);
+                        if !drag.selected.contains(&cell) {
                             drag.selected.clear();
-                            drag.selected.insert(i);
+                            drag.selected.insert(cell);
                         }
                     }
                 } else {
-                    drag.press_pos = cursor_world;
+                    drag.press_pos = cursor;
                 }
             }
-            None => {
-                drag.press_pos = cursor_world;
-            }
+            None => drag.press_pos = cursor,
         }
     }
 
-    if let (Some(src), Some(w)) = (drag.dragging, cursor_world) {
+    if let (Some(source), Some(world)) = (drag.dragging, cursor) {
         let origin = grid_origin(&lookup);
-        let a = cell_pos(&lookup, origin, src);
-        gizmos.line_2d(a, w, Color::srgb(1.0, 0.85, 0.2));
+        gizmos.line_2d(
+            cell_pos(&lookup, origin, source),
+            world,
+            Color::srgb(1.0, 0.85, 0.2),
+        );
     }
-    if let (Some(p0), Some(w)) = (drag.press_pos, cursor_world) {
-        if (w - p0).length() > 12.0 {
-            gizmos.rect_2d(
-                Isometry2d::from_translation((p0 + w) / 2.0),
-                (w - p0).abs(),
-                Color::srgba(1.0, 0.85, 0.2, 0.6),
-            );
+    draw_selection_box(drag.press_pos, cursor, &mut gizmos);
+
+    if !buttons.just_released(MouseButton::Left) {
+        return;
+    }
+    if let Some(source) = drag.dragging.take() {
+        match cursor.and_then(|world| world_to_cell(world, &lookup, &kinds)) {
+            Some(target) if target != source => {
+                let count = push_stream_intents(&mut intents, &drag.selected, target);
+                hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
+            }
+            Some(_) if active_stream_from(&streams, source) => {
+                intents.push(Intent::StopStream {
+                    faction: PLAYER,
+                    source,
+                });
+                hud.last_event = format!("停止 {:?} 的兵流", lookup.xy(source));
+            }
+            Some(_) => {
+                hud.last_event = format!("已选中 {:?}，拖到目标格派兵", lookup.xy(source));
+            }
+            None => hud.last_event = "释放在地图外，取消".into(),
         }
+        return;
     }
 
-    if buttons.just_released(MouseButton::Left) {
-        if let Some(src) = drag.dragging.take() {
-            match cursor_world.and_then(|w| world_to_cell(w, &lookup, &kinds)) {
-                Some(target) if target != src => {
-                    let targets: Vec<CellIdx> = drag.selected.iter().copied().collect();
-                    let ok_count = targets.len();
-                    for b in targets {
-                        intents.push(Intent::SetStream { faction: PLAYER, source: b, target });
-                    }
-                    hud.last_event = format!("{} 个据点出兵 → {:?}", ok_count, lookup.xy(target));
-                }
-                Some(_) => {
-                    // 点击出兵中的己方据点（或拖到自己）= 停止出兵
-                    let has_stream = streams
-                        .iter()
-                        .any(|s| s.active && s.faction == PLAYER && s.source == src);
-                    if has_stream {
-                        intents.push(Intent::StopStream { faction: PLAYER, source: src });
-                        hud.last_event = format!("停止 {:?} 的兵流", lookup.xy(src));
-                    } else {
-                        hud.last_event = format!("已选中 {:?}，再点目标格派兵", lookup.xy(src));
-                    }
-                }
-                None => {
-                    hud.last_event = "释放在地图外，取消".into();
-                }
-            }
-        } else if let Some(p0) = drag.press_pos.take() {
-            if let Some(w) = cursor_world {
-                if (w - p0).length() > 12.0 {
-                    let min = p0.min(w);
-                    let max = p0.max(w);
-                    let origin = grid_origin(&lookup);
-                    if !shift {
-                        drag.selected.clear();
-                    }
-                    for (i, &e) in lookup.cells.iter().enumerate() {
-                        let (Ok(kind), Ok(owner)) = (kinds.get(e), owners.get(e)) else { continue };
-                        if *kind != CellKind::Base || owner.0 != PLAYER {
-                            continue;
-                        }
-                        let p = cell_pos(&lookup, origin, i);
-                        if p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y {
-                            drag.selected.insert(i);
-                        }
-                    }
-                    hud.last_event = format!("框选 {} 个据点", drag.selected.len());
-                } else if let Some(target) = world_to_cell(w, &lookup, &kinds) {
-                    let bases: Vec<CellIdx> = drag.selected.iter().copied().collect();
-                    let ok_count = bases.len();
-                    for b in bases {
-                        intents.push(Intent::SetStream { faction: PLAYER, source: b, target });
-                    }
-                    hud.last_event = format!("{} 个据点出兵 → {:?}", ok_count, lookup.xy(target));
-                } else {
-                    drag.selected.clear();
-                }
-            }
-        }
+    let Some(press) = drag.press_pos.take() else {
+        return;
+    };
+    let Some(release) = cursor else {
+        return;
+    };
+    if (release - press).length() > BOX_THRESHOLD {
+        select_bases_in_rect(
+            &mut drag.selected,
+            press,
+            release,
+            shift,
+            &lookup,
+            &kinds,
+            &owners,
+        );
+        hud.last_event = format!("框选 {} 个据点", drag.selected.len());
+    } else if let Some(target) = world_to_cell(release, &lookup, &kinds) {
+        let count = push_stream_intents(&mut intents, &drag.selected, target);
+        hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
+    } else {
+        drag.selected.clear();
     }
 }
 
@@ -173,10 +405,71 @@ pub fn switch_difficulty(
     let controllers = factions
         .0
         .iter()
-        .filter(|f| !f.is_player)
-        .map(|f| AiController::new(f.id, params))
+        .filter(|faction| !faction.is_player)
+        .map(|faction| AiController::new(faction.id, params))
         .collect();
     commands.insert_resource(AiControllers(controllers));
     commands.insert_resource(DifficultyName(name));
     hud.last_event = format!("AI 难度切换为：{name}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn multiple_sources_are_sorted_and_target_source_is_skipped() {
+        let selected = HashSet::from([9, 2, 5]);
+        let commands = set_stream_intents(&selected, 5);
+        let pairs: Vec<(CellIdx, CellIdx)> = commands
+            .into_iter()
+            .map(|intent| match intent {
+                Intent::SetStream { source, target, .. } => (source, target),
+                Intent::StopStream { .. } => panic!("不应生成停止命令"),
+            })
+            .collect();
+        assert_eq!(pairs, vec![(2, 5), (9, 5)]);
+    }
+
+    #[test]
+    fn toggling_selected_base_is_reversible() {
+        let mut selected = HashSet::new();
+        toggle_selection(&mut selected, 7);
+        assert!(selected.contains(&7));
+        toggle_selection(&mut selected, 7);
+        assert!(selected.is_empty());
+    }
+
+    #[test]
+    fn desktop_click_flow_selects_then_sends() {
+        let empty = HashSet::new();
+        assert!(matches!(
+            desktop_click_plan(&empty, 3, true, false, false),
+            DesktopClickPlan::Select(3)
+        ));
+
+        let selected = HashSet::from([3]);
+        let DesktopClickPlan::Send(commands) =
+            desktop_click_plan(&selected, 8, false, false, false)
+        else {
+            panic!("第二次点击目标应生成派兵命令");
+        };
+        assert!(matches!(
+            commands.as_slice(),
+            [Intent::SetStream {
+                source: 3,
+                target: 8,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn clicking_only_selected_active_base_stops_stream() {
+        let selected = HashSet::from([4]);
+        assert!(matches!(
+            desktop_click_plan(&selected, 4, true, false, true),
+            DesktopClickPlan::Stop(4)
+        ));
+    }
 }

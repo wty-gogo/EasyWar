@@ -26,7 +26,7 @@ layout = [
 ]
 
 # ---- 据点 ----
-# 每个据点 4 块关联地块（沿链条相邻），知识点取词库 knowledge_index
+# 每个据点 4 块关联地块（沿链条相邻）；知识点名称每局从该学科词库随机抽取（不重复）
 
 [[base]]
 subject = "chinese"
@@ -35,10 +35,10 @@ pos = [2, 11]
 garrison = 20
 production_base = 2.5
 linked_tiles = [
-  { pos = [2, 10], knowledge_index = 0 },  # 诗歌
-  { pos = [2, 9],  knowledge_index = 1 },  # 古文
-  { pos = [2, 8],  knowledge_index = 2 },  # 修辞
-  { pos = [2, 7],  knowledge_index = 3 },  # 语法
+  { pos = [2, 10] },
+  { pos = [2, 9] },
+  { pos = [2, 8] },
+  { pos = [2, 7] },
 ]
 
 [[base]]
@@ -48,10 +48,10 @@ pos = [11, 1]
 garrison = 20
 production_base = 2.5
 linked_tiles = [
-  { pos = [11, 2], knowledge_index = 0 },  # 函数
-  { pos = [11, 3], knowledge_index = 1 },  # 几何
-  { pos = [11, 4], knowledge_index = 2 },  # 代数
-  { pos = [11, 5], knowledge_index = 3 },  # 数列
+  { pos = [11, 2] },
+  { pos = [11, 3] },
+  { pos = [11, 4] },
+  { pos = [11, 5] },
 ]
 
 [[base]]
@@ -61,10 +61,10 @@ pos = [2, 1]
 garrison = 40
 production_base = 2.5
 linked_tiles = [
-  { pos = [2, 2], knowledge_index = 0 },   # 元素
-  { pos = [2, 3], knowledge_index = 1 },   # 酸碱
-  { pos = [2, 4], knowledge_index = 2 },   # 氧化
-  { pos = [2, 5], knowledge_index = 3 },   # 催化
+  { pos = [2, 2] },
+  { pos = [2, 3] },
+  { pos = [2, 4] },
+  { pos = [2, 5] },
 ]
 
 [[base]]
@@ -74,10 +74,10 @@ pos = [11, 11]
 garrison = 40
 production_base = 2.5
 linked_tiles = [
-  { pos = [11, 10], knowledge_index = 0 }, # 音阶
-  { pos = [11, 9],  knowledge_index = 1 }, # 和弦
-  { pos = [11, 8],  knowledge_index = 2 }, # 节拍
-  { pos = [11, 7],  knowledge_index = 3 }, # 旋律
+  { pos = [11, 10] },
+  { pos = [11, 9] },
+  { pos = [11, 8] },
+  { pos = [11, 7] },
 ]
 
 [[base]]
@@ -87,10 +87,10 @@ pos = [2, 6]
 garrison = 40
 production_base = 2.5
 linked_tiles = [
-  { pos = [3, 6], knowledge_index = 0 },   # 力学
-  { pos = [4, 6], knowledge_index = 1 },   # 电学
-  { pos = [5, 6], knowledge_index = 2 },   # 光学
-  { pos = [6, 6], knowledge_index = 3 },   # 声学
+  { pos = [3, 6] },
+  { pos = [4, 6] },
+  { pos = [5, 6] },
+  { pos = [6, 6] },
 ]
 
 [[base]]
@@ -100,10 +100,10 @@ pos = [11, 6]
 garrison = 40
 production_base = 2.5
 linked_tiles = [
-  { pos = [10, 6], knowledge_index = 0 },  # 季风
-  { pos = [9, 6],  knowledge_index = 1 },  # 洋流
-  { pos = [8, 6],  knowledge_index = 2 },  # 地形
-  { pos = [7, 6],  knowledge_index = 3 },  # 气候
+  { pos = [10, 6] },
+  { pos = [9, 6] },
+  { pos = [8, 6] },
+  { pos = [7, 6] },
 ]
 
 # ---- 中立普通地块 ----
@@ -128,5 +128,6 @@ garrison_cap_base = 80      # 据点驻军基础上限
 garrison_cap_per_tile = 10  # 每块已占领关联地块 +10 上限
 regen_per_sec = 1.0
 squad_interval_sec = 0.2
-squad_max_size = 3
+squad_max_size = 3                 # 40 兵以内每波 3 兵
+squad_growth_garrison_step = 40    # 超过 40 后，每多 40 驻军，理论每波兵力 +1
 squad_move_sec_per_cell = 0.4

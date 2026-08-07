@@ -17,11 +17,13 @@ pub mod streams;
 pub mod victory;
 pub mod world_ext;
 
-pub use ai::{AiControllers, AiController, AiParams};
+pub use ai::{AiController, AiControllers, AiParams};
 pub use bevy_ecs::entity::Entity;
 pub use components::*;
 pub use intents::{Intent, IntentQueue};
-pub use map::{load_subjects, parse_hex_color, spawn_map, spawn_map_custom, SubjectDef};
+pub use map::{
+    load_subjects, parse_hex_color, spawn_map, spawn_map_custom, spawn_map_seeded, SubjectDef,
+};
 pub use plugin::{GamePlugin, SimTick, SIM_DT};
 
 use bevy_ecs::prelude::*;
@@ -44,7 +46,11 @@ pub fn alive_factions(world: &mut World) -> Vec<FactionId> {
 /// 指定阵营当前拥有的据点数
 pub fn base_count(world: &mut World, faction: FactionId) -> usize {
     let board = board::Board::load(world);
-    board.bases.iter().filter(|b| board.owner[b.cell] == faction).count()
+    board
+        .bases
+        .iter()
+        .filter(|b| board.owner[b.cell] == faction)
+        .count()
 }
 
 /// 某据点当前是否有该阵营的活跃兵流
@@ -56,30 +62,45 @@ pub fn stream_from(world: &mut World, faction: FactionId, source: CellIdx) -> Op
 }
 
 /// 纯最短路径（测试 / 回放 / 调试用；SimTick 内的寻路走 Board 内部）
-pub fn find_path(world: &mut World, from: CellIdx, to: CellIdx, faction: FactionId) -> Option<Vec<CellIdx>> {
+pub fn find_path(
+    world: &mut World,
+    from: CellIdx,
+    to: CellIdx,
+    faction: FactionId,
+) -> Option<Vec<CellIdx>> {
     board::Board::load(world).find_path(from, to, faction)
 }
 
 /// 据点实时产能（base_cell 为据点格子下标）
 pub fn base_production(world: &mut World, base_cell: CellIdx) -> f32 {
     let board = board::Board::load(world);
-    let b = board.bases.iter().find(|b| b.cell == base_cell).expect("不是据点格子");
+    let b = board
+        .bases
+        .iter()
+        .find(|b| b.cell == base_cell)
+        .expect("不是据点格子");
     board.base_production(b)
 }
 
 /// 据点驻军上限
 pub fn base_garrison_cap(world: &mut World, base_cell: CellIdx) -> f32 {
     let board = board::Board::load(world);
-    let b = board.bases.iter().find(|b| b.cell == base_cell).expect("不是据点格子");
+    let b = board
+        .bases
+        .iter()
+        .find(|b| b.cell == base_cell)
+        .expect("不是据点格子");
     board.base_garrison_cap(b)
 }
 
 /// 立即应用一个意图（绕过队列；测试/调试用，游戏运行走 IntentQueue）
 pub fn dispatch_intent(world: &mut World, intent: Intent) -> bool {
     match intent {
-        Intent::SetStream { faction, source, target } => {
-            intents::set_stream(world, faction, source, target)
-        }
+        Intent::SetStream {
+            faction,
+            source,
+            target,
+        } => intents::set_stream(world, faction, source, target),
         Intent::StopStream { faction, source } => {
             intents::stop_stream(world, faction, source);
             true
