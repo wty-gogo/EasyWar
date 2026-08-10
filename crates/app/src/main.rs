@@ -7,6 +7,7 @@ mod ending;
 mod hud;
 mod input;
 mod menu;
+mod neural_ai;
 mod overlay;
 mod render;
 
@@ -48,13 +49,14 @@ fn main() {
     .insert_resource(SubjectList(list))
     .insert_resource(MenuSelection {
         subject: 1, // 默认语文
-        difficulty: 1,
+        difficulty: configured_difficulty(),
         map: 0,
     })
     .insert_resource(InputMode::from_environment())
     .insert_resource(DragState::default())
     .insert_resource(DebugHud::default())
     .insert_resource(SimAccum::default())
+    .insert_resource(neural_ai::NeuralModelResource::embedded())
     .add_systems(Startup, |mut commands: Commands| {
         commands.spawn(Camera2d);
     })

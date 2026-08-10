@@ -1,6 +1,7 @@
 //! 玩家输入：桌面点击/框选与触屏拖拽分别转成 Intent；难度切换。
 
 use crate::common::*;
+use crate::neural_ai::{configured_controllers, NeuralModelResource};
 use bevy::prelude::*;
 use easywar_logic::*;
 use std::collections::HashSet;
@@ -385,30 +386,32 @@ pub fn handle_touch_input(
     }
 }
 
-/// 1/2/3 实时切换 AI 难度：重建全部 AI 控制器（行为参数全部来自行为，不作弊）
+/// 1/2/3/4 实时切换 AI：规则参数与神经模型都只提交玩家级合法意图。
 pub fn switch_difficulty(
     keyboard: Res<ButtonInput<KeyCode>>,
     factions: Res<Factions>,
+    current_map: Res<CurrentMapFile>,
+    model: Res<NeuralModelResource>,
+    mut selection: ResMut<MenuSelection>,
     mut hud: ResMut<DebugHud>,
     mut commands: Commands,
 ) {
-    let (idx, name) = if keyboard.just_pressed(KeyCode::Digit1) {
-        (0usize, "简单")
+    let idx = if keyboard.just_pressed(KeyCode::Digit1) {
+        0usize
     } else if keyboard.just_pressed(KeyCode::Digit2) {
-        (1, "中等")
+        1
     } else if keyboard.just_pressed(KeyCode::Digit3) {
-        (2, "困难")
+        2
+    } else if keyboard.just_pressed(KeyCode::Digit4) {
+        3
     } else {
         return;
     };
-    let params = DIFFICULTIES[idx].1();
-    let controllers = factions
-        .0
-        .iter()
-        .filter(|faction| !faction.is_player)
-        .map(|faction| AiController::new(faction.id, params))
-        .collect();
-    commands.insert_resource(AiControllers(controllers));
+    let (controllers, policy_controllers, name) =
+        configured_controllers(idx, &current_map.0, &factions, &model);
+    selection.difficulty = idx;
+    commands.insert_resource(controllers);
+    commands.insert_resource(policy_controllers);
     commands.insert_resource(DifficultyName(name));
     hud.last_event = format!("AI 难度切换为：{name}");
 }

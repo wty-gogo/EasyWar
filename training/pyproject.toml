@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.10,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "easywar-training"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "numpy>=2.0,<3.0",
+  "torch>=2.6,<3.0",
+  "torchrl>=0.8,<1.0",
+]
+
+[tool.maturin]
+manifest-path = "../crates/rl-python/Cargo.toml"
+module-name = "easywar_rl"

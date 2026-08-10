@@ -5,6 +5,7 @@
 //! - `check_end`：Winner 出现 → 结算数据 → 切到 Ended
 
 use crate::common::*;
+use crate::neural_ai::{configured_controllers, NeuralModelResource};
 use bevy::prelude::*;
 use easywar_logic::*;
 use std::path::{Path, PathBuf};
@@ -38,6 +39,11 @@ pub fn enter_playing(world: &mut World) {
 
     let root = workspace_assets();
     let map_path = selected_map_path(&root, selected_map);
+    let map_file = map_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("未知地图")
+        .to_string();
     spawn_map_custom(
         world,
         &map_path,
@@ -61,17 +67,18 @@ pub fn enter_playing(world: &mut World) {
         }
     }
 
-    let (diff_name, diff_params) = DIFFICULTIES[difficulty];
-    let factions = world.resource::<Factions>().0.clone();
-    let controllers = factions
-        .iter()
-        .filter(|f| !f.is_player)
-        .map(|f| AiController::new(f.id, diff_params()))
-        .collect();
+    let (controllers, policy_controllers, diff_name) = configured_controllers(
+        difficulty,
+        &map_file,
+        world.resource::<Factions>(),
+        world.resource::<NeuralModelResource>(),
+    );
 
     world.insert_resource(tint);
-    world.insert_resource(AiControllers(controllers));
+    world.insert_resource(controllers);
+    world.insert_resource(policy_controllers);
     world.insert_resource(DifficultyName(diff_name));
+    world.insert_resource(CurrentMapFile(map_file));
     world.insert_resource(DragState::default());
     world.insert_resource(DebugHud::default());
     // 重置对局状态资源（GamePlugin 在 App 启动时 init 过，重开一局要归零）
@@ -111,8 +118,10 @@ pub fn exit_playing(world: &mut World) {
     world.remove_resource::<Factions>();
     world.remove_resource::<LinkedTint>();
     world.remove_resource::<DifficultyName>();
+    world.remove_resource::<CurrentMapFile>();
     world.remove_resource::<BoardSpawned>();
     world.remove_resource::<AiControllers>();
+    world.remove_resource::<PolicyControllers>();
 }
 
 /// 按墙钟累积并显式驱动 SimTick。暂停/倍速/快进只改这里。
@@ -138,6 +147,7 @@ pub fn drive_sim(world: &mut World) {
 pub fn check_end(
     mut commands: Commands,
     winner: Res<Winner>,
+    factions: Res<Factions>,
     cells: Query<(&CellKind, &Owner)>,
     mut next: ResMut<NextState<AppState>>,
 ) {
@@ -150,10 +160,26 @@ pub fn check_end(
         };
         commands.insert_resource(EndInfo {
             winner: w,
+            winner_name: factions
+                .0
+                .iter()
+                .find(|faction| faction.id == w)
+                .map(|faction| faction.name.clone())
+                .unwrap_or_else(|| format!("阵营 {w}")),
             player_bases: count(PLAYER, CellKind::Base),
             player_tiles: count(PLAYER, CellKind::LinkedTile),
-            enemy_bases: count(2, CellKind::Base),
-            enemy_tiles: count(2, CellKind::LinkedTile),
+            rival_bases: cells
+                .iter()
+                .filter(|(kind, owner)| {
+                    owner.0 != NEUTRAL && owner.0 != PLAYER && **kind == CellKind::Base
+                })
+                .count(),
+            rival_tiles: cells
+                .iter()
+                .filter(|(kind, owner)| {
+                    owner.0 != NEUTRAL && owner.0 != PLAYER && **kind == CellKind::LinkedTile
+                })
+                .count(),
         });
         next.set(AppState::Ended);
     }

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/logic", "crates/app"]
+members = ["crates/logic", "crates/app", "crates/rl-python"]
 resolver = "2"
 
 [profile.dev]

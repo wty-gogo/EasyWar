@@ -1,0 +1,15 @@
+[package]
+name = "easywar-rl-python"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "easywar_rl"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+easywar-logic = { path = "../logic" }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py312"] }
+
+[build-dependencies]
+pyo3-build-config = "0.29"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "EasyWar 地图设计"
+  short_description: "按拓扑、公平性与对局节奏标准设计和验证 EasyWar 地图"
+  default_prompt: "使用 $design-easywar-maps 设计并验证一张新的 EasyWar 1v1 地图。"

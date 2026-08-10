@@ -4,7 +4,7 @@
 use crate::components::*;
 use bevy_ecs::prelude::*;
 use serde::Deserialize;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 // ---------- TOML 文件结构（与 assets/maps/*.toml 对应） ----------
@@ -72,11 +72,17 @@ struct RulesDef {
     squad_max_size: f32,
     #[serde(default = "default_squad_growth_garrison_step")]
     squad_growth_garrison_step: f32,
+    #[serde(default = "default_squad_soft_cap_garrison")]
+    squad_soft_cap_garrison: f32,
     squad_move_sec_per_cell: f32,
 }
 
 fn default_squad_growth_garrison_step() -> f32 {
     40.0
+}
+
+fn default_squad_soft_cap_garrison() -> f32 {
+    120.0
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -136,6 +142,11 @@ fn validate_map_file(mf: &MapFile) -> Result<MapSymmetry, String> {
         || mf.rules.squad_growth_garrison_step <= 0.0
     {
         return Err("动态波次的驻军增长步长必须大于 0".into());
+    }
+    if !mf.rules.squad_soft_cap_garrison.is_finite()
+        || mf.rules.squad_soft_cap_garrison < mf.rules.squad_growth_garrison_step
+    {
+        return Err("动态波次的缓增长起点不得小于驻军增长步长".into());
     }
 
     let enterable: Vec<bool> = mf
@@ -293,6 +304,82 @@ impl Rng {
 
 // ---------- 生成地图 ----------
 
+/// 返回稳定的阵营顺序：玩家固定为 1，其余 owner 按名称排序。
+/// 地图文件中的据点声明顺序不应改变阵营 id 或 AI 提交顺序。
+fn faction_owner_names(bases: &[BaseDef]) -> Vec<String> {
+    let mut owners = bases
+        .iter()
+        .filter(|base| base.owner != "neutral")
+        .map(|base| base.owner.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    owners.sort_by(|left, right| match (left.as_str(), right.as_str()) {
+        ("player", "player") => std::cmp::Ordering::Equal,
+        ("player", _) => std::cmp::Ordering::Less,
+        (_, "player") => std::cmp::Ordering::Greater,
+        _ => left.cmp(right),
+    });
+    owners
+}
+
+/// 开局自选学科后，为所有初始阵营分配互不重复的学科；中立据点再使用剩余学科。
+fn assign_custom_subjects(
+    map: &mut MapFile,
+    subjects: &HashMap<String, SubjectDef>,
+    player_subject: Option<&str>,
+    ai_subject: Option<&str>,
+) -> Result<(), String> {
+    if player_subject.is_none() && ai_subject.is_none() {
+        return Ok(());
+    }
+
+    let mut subject_ids = subjects.keys().cloned().collect::<Vec<_>>();
+    subject_ids.sort();
+    let mut used = HashSet::new();
+    let owner_subjects = faction_owner_names(&map.base)
+        .into_iter()
+        .map(|owner| {
+            let configured = map
+                .base
+                .iter()
+                .find(|base| base.owner == owner)
+                .map(|base| base.subject.as_str())
+                .ok_or_else(|| format!("阵营 {owner} 没有出生据点"))?;
+            let preferred = match owner.as_str() {
+                "player" => player_subject.unwrap_or(configured),
+                "ai" => ai_subject.unwrap_or(configured),
+                _ => configured,
+            };
+            let chosen = (!used.contains(preferred) && subjects.contains_key(preferred))
+                .then(|| preferred.to_string())
+                .or_else(|| subject_ids.iter().find(|id| !used.contains(*id)).cloned())
+                .ok_or_else(|| "可用学科数量少于参战阵营数量".to_string())?;
+            used.insert(chosen.clone());
+            Ok((owner, chosen))
+        })
+        .collect::<Result<HashMap<_, _>, String>>()?;
+
+    map.base
+        .iter_mut()
+        .filter(|base| base.owner != "neutral")
+        .for_each(|base| base.subject = owner_subjects[&base.owner].clone());
+
+    let remaining = subject_ids
+        .into_iter()
+        .filter(|id| !used.contains(id))
+        .collect::<Vec<_>>();
+    if remaining.is_empty() && map.base.iter().any(|base| base.owner == "neutral") {
+        return Err("没有可分配给中立据点的学科".into());
+    }
+    map.base
+        .iter_mut()
+        .filter(|base| base.owner == "neutral")
+        .enumerate()
+        .for_each(|(index, base)| base.subject = remaining[index % remaining.len()].clone());
+    Ok(())
+}
+
 pub fn spawn_map(world: &mut World, map_path: &Path, subjects_dir: &Path) -> Result<(), String> {
     spawn_map_inner(world, map_path, subjects_dir, None, None, None)
 }
@@ -345,6 +432,8 @@ fn spawn_map_inner(
     let symmetry = validate_map_file(&mf)?;
     let subjects = load_subjects(subjects_dir)?;
 
+    assign_custom_subjects(&mut mf, &subjects, player_subject, ai_subject)?;
+
     for base in &mf.base {
         let subject = subjects
             .get(&base.subject)
@@ -359,63 +448,31 @@ fn spawn_map_inner(
         }
     }
 
-    // 学科重排：玩家/AI 用选择的学科，中立据点按顺序分配剩余学科
-    if player_subject.is_some() || ai_subject.is_some() {
-        let mut used: Vec<String> = Vec::new();
-        for b in mf.base.iter_mut() {
-            match b.owner.as_str() {
-                "player" => {
-                    if let Some(s) = player_subject {
-                        b.subject = s.into();
-                        used.push(s.into());
-                    }
-                }
-                "ai" => {
-                    if let Some(s) = ai_subject {
-                        b.subject = s.into();
-                        used.push(s.into());
-                    }
-                }
-                _ => {}
-            }
-        }
-        let mut remaining: Vec<String> = subjects
-            .keys()
-            .filter(|id| !used.contains(id))
-            .cloned()
-            .collect();
-        remaining.sort();
-        let mut i = 0;
-        for b in mf.base.iter_mut() {
-            if b.owner == "neutral" && !remaining.is_empty() {
-                b.subject = remaining[i % remaining.len()].clone();
-                i += 1;
-            }
-        }
-    }
-
     let (w, h) = (mf.map.width, mf.map.height);
 
-    // 阵营分配：player → 1，ai → 2（按出现顺序往后）
-    let mut faction_of_owner: HashMap<String, FactionId> = HashMap::new();
+    // 阵营分配：player → 1，其余 owner 按名称稳定排序。
+    let mut faction_of_owner = HashMap::new();
     faction_of_owner.insert("neutral".into(), NEUTRAL);
-    let mut factions: Vec<Faction> = Vec::new();
-    for b in &mf.base {
-        if b.owner == "neutral" || faction_of_owner.contains_key(&b.owner) {
-            continue;
-        }
-        let id = faction_of_owner.len() as FactionId;
-        faction_of_owner.insert(b.owner.clone(), id);
-        let subj = subjects
-            .get(&b.subject)
-            .ok_or_else(|| format!("未知学科: {}", b.subject))?;
-        factions.push(Faction {
-            id,
-            name: subj.name.clone(),
-            color: parse_hex_color(&subj.color),
-            is_player: b.owner == "player",
-        });
-    }
+    let factions = faction_owner_names(&mf.base)
+        .into_iter()
+        .enumerate()
+        .map(|(index, owner)| {
+            let id = (index + 1) as FactionId;
+            let base = mf
+                .base
+                .iter()
+                .find(|base| base.owner == owner)
+                .expect("阵营名称必定来自某个据点");
+            let subject = &subjects[&base.subject];
+            faction_of_owner.insert(owner.clone(), id);
+            Faction {
+                id,
+                name: subject.name.clone(),
+                color: parse_hex_color(&subject.color),
+                is_player: owner == "player",
+            }
+        })
+        .collect::<Vec<_>>();
 
     // 中梁判定：整行都是 '#' 的行
     let is_beam_row: Vec<bool> = mf
@@ -580,6 +637,7 @@ fn spawn_map_inner(
         squad_interval_sec: mf.rules.squad_interval_sec,
         squad_max_size: mf.rules.squad_max_size,
         squad_growth_garrison_step: mf.rules.squad_growth_garrison_step,
+        squad_soft_cap_garrison: mf.rules.squad_soft_cap_garrison,
         squad_move_sec_per_cell: mf.rules.squad_move_sec_per_cell,
     });
     Ok(())

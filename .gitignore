@@ -1,1 +1,7 @@
 /target
+/.venv
+/training/.venv
+/training/checkpoints
+/training/runs
+__pycache__/
+*.pyc

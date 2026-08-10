@@ -30,9 +30,21 @@ struct Scenario {
 
 fn scenarios() -> Vec<Scenario> {
     vec![
-        Scenario { name: "normal_mirror", ai1: Some(AiParams::normal()), ai2: Some(AiParams::normal()) },
-        Scenario { name: "hard_vs_idle", ai1: None, ai2: Some(AiParams::hard()) },
-        Scenario { name: "easy_vs_hard", ai1: Some(AiParams::easy()), ai2: Some(AiParams::hard()) },
+        Scenario {
+            name: "normal_mirror",
+            ai1: Some(AiParams::normal()),
+            ai2: Some(AiParams::normal()),
+        },
+        Scenario {
+            name: "hard_vs_idle",
+            ai1: None,
+            ai2: Some(AiParams::hard()),
+        },
+        Scenario {
+            name: "easy_vs_hard",
+            ai1: Some(AiParams::easy()),
+            ai2: Some(AiParams::hard()),
+        },
     ]
 }
 
@@ -103,18 +115,28 @@ fn assert_close(scenario: &str, expected: &str, actual: &str) {
         line_no += 1;
         let ev: Vec<&str> = e.split_whitespace().collect();
         let av: Vec<&str> = a.split_whitespace().collect();
-        assert_eq!(ev.len(), av.len(), "[{scenario}] 第{line_no}行字段数不同: `{e}` vs `{a}`");
+        assert_eq!(
+            ev.len(),
+            av.len(),
+            "[{scenario}] 第{line_no}行字段数不同: `{e}` vs `{a}`"
+        );
         if ev[0] == "end" {
             assert_eq!(ev[1], av[1], "[{scenario}] 胜者不同: `{e}` vs `{a}`");
             let et: f64 = ev[2].parse().unwrap();
             let at: f64 = av[2].parse().unwrap();
             let tol = (et * 0.10).max(64.0);
-            assert!((et - at).abs() <= tol, "[{scenario}] 结束 tick 偏差过大: `{e}` vs `{a}`");
+            assert!(
+                (et - at).abs() <= tol,
+                "[{scenario}] 结束 tick 偏差过大: `{e}` vs `{a}`"
+            );
         } else {
             for (x, y) in ev.iter().zip(av.iter()) {
                 let xi: i64 = x.parse().unwrap();
                 let yi: i64 = y.parse().unwrap();
-                assert!((xi - yi).abs() <= 2, "[{scenario}] 第{line_no}行数值偏差过大: `{e}` vs `{a}`");
+                assert!(
+                    (xi - yi).abs() <= 2,
+                    "[{scenario}] 第{line_no}行数值偏差过大: `{e}` vs `{a}`"
+                );
             }
         }
     }

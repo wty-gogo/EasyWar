@@ -22,7 +22,8 @@ impl Plugin for GamePlugin {
             .init_resource::<crate::components::Winner>()
             .init_resource::<crate::components::Factions>()
             .init_resource::<crate::intents::IntentQueue>()
-            .init_resource::<crate::ai::AiControllers>();
+            .init_resource::<crate::ai::AiControllers>()
+            .init_resource::<crate::rl::PolicyControllers>();
         // 链序与旧循环严格同构：
         // apply_intents（旧：AI 指令在 update 后立即生效）
         // → economy → streams → movement → combat → victory（旧 update 的五个阶段）
@@ -37,6 +38,7 @@ impl Plugin for GamePlugin {
                 crate::combat::combat,
                 crate::victory::victory,
                 crate::ai::ai_decide,
+                crate::rl::policy_decide,
             )
                 .chain(),
         );

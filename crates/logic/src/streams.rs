@@ -10,9 +10,15 @@ use bevy_ecs::prelude::*;
 /// 根据当前驻军计算下一波整数兵力，并返回留给下一波的小数额度。
 ///
 /// `squad_max_size` 沿用地图字段名，动态规则里表示 40 兵以内的基础波次兵力。
+fn theoretical_wave_troops(rules: Rules, garrison: f32) -> f32 {
+    let step = rules.squad_growth_garrison_step;
+    let linear_excess = (garrison.min(rules.squad_soft_cap_garrison) - step).max(0.0);
+    let overflow = (garrison - rules.squad_soft_cap_garrison).max(0.0);
+    rules.squad_max_size + linear_excess / step + (overflow / step).sqrt()
+}
+
 fn next_wave_troops(rules: Rules, garrison: f32, carry: f32) -> (f32, f32) {
-    let excess = (garrison - rules.squad_growth_garrison_step).max(0.0);
-    let theoretical = rules.squad_max_size + excess / rules.squad_growth_garrison_step + carry;
+    let theoretical = theoretical_wave_troops(rules, garrison) + carry;
     let scheduled = theoretical.floor();
     let available = garrison.floor();
     (scheduled.min(available), theoretical - scheduled)
@@ -136,6 +142,7 @@ mod tests {
             squad_interval_sec: 0.2,
             squad_max_size: 3.0,
             squad_growth_garrison_step: 40.0,
+            squad_soft_cap_garrison: 120.0,
             squad_move_sec_per_cell: 0.4,
         }
     }
@@ -147,10 +154,17 @@ mod tests {
     }
 
     #[test]
-    fn wave_size_grows_by_one_per_forty_garrison() {
+    fn wave_size_grows_linearly_until_soft_cap() {
         assert_eq!(next_wave_troops(rules(), 80.0, 0.0), (4.0, 0.0));
         assert_eq!(next_wave_troops(rules(), 120.0, 0.0), (5.0, 0.0));
-        assert_eq!(next_wave_troops(rules(), 400.0, 0.0), (12.0, 0.0));
+    }
+
+    #[test]
+    fn wave_size_uses_square_root_growth_above_soft_cap() {
+        let at_four_hundred = theoretical_wave_troops(rules(), 400.0);
+        let at_one_thousand = theoretical_wave_troops(rules(), 1000.0);
+        assert!((at_four_hundred - 7.645_751).abs() < 0.000_1);
+        assert!((at_one_thousand - 9.690_416).abs() < 0.000_1);
     }
 
     #[test]

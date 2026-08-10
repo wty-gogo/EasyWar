@@ -9,10 +9,12 @@ pub mod board;
 pub mod combat;
 pub mod components;
 pub mod economy;
+pub mod evaluation3;
 pub mod intents;
 pub mod map;
 pub mod movement;
 pub mod plugin;
+pub mod rl;
 pub mod streams;
 pub mod victory;
 pub mod world_ext;
@@ -25,6 +27,7 @@ pub use map::{
     load_subjects, parse_hex_color, spawn_map, spawn_map_custom, spawn_map_seeded, SubjectDef,
 };
 pub use plugin::{GamePlugin, SimTick, SIM_DT};
+pub use rl::{Policy, PolicyController, PolicyControllers};
 
 use bevy_ecs::prelude::*;
 

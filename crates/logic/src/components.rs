@@ -154,6 +154,8 @@ pub struct Rules {
     pub squad_max_size: f32,
     /// 驻军超过此值后，每再增加这么多驻军，理论每波兵力增加 1。
     pub squad_growth_garrison_step: f32,
+    /// 驻军超过此值后改用平方根缓增长，抑制超上限驻军的瞬时吞吐。
+    pub squad_soft_cap_garrison: f32,
     pub squad_move_sec_per_cell: f32,
 }
 

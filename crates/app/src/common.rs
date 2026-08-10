@@ -10,11 +10,46 @@ pub const BORDER: f32 = 4.0;
 pub const STEP: f32 = 48.0;
 pub const PLAYER: FactionId = 1;
 
-pub const DIFFICULTIES: [(&str, fn() -> AiParams); 3] = [
-    ("简单", AiParams::easy),
-    ("中等", AiParams::normal),
-    ("困难", AiParams::hard),
+#[derive(Clone, Copy)]
+pub enum DifficultyKind {
+    Rule(fn() -> AiParams),
+    NeuralV5,
+}
+
+#[derive(Clone, Copy)]
+pub struct DifficultyChoice {
+    pub name: &'static str,
+    pub kind: DifficultyKind,
+}
+
+pub const DIFFICULTIES: [DifficultyChoice; 4] = [
+    DifficultyChoice {
+        name: "简单",
+        kind: DifficultyKind::Rule(AiParams::easy),
+    },
+    DifficultyChoice {
+        name: "中等",
+        kind: DifficultyKind::Rule(AiParams::normal),
+    },
+    DifficultyChoice {
+        name: "困难",
+        kind: DifficultyKind::Rule(AiParams::hard),
+    },
+    DifficultyChoice {
+        name: "神经模型 V5",
+        kind: DifficultyKind::NeuralV5,
+    },
 ];
+
+pub fn configured_difficulty() -> usize {
+    match std::env::var("EASYWAR_DIFFICULTY").as_deref() {
+        Ok("easy" | "0") => 0,
+        Ok("normal" | "1") => 1,
+        Ok("hard" | "2") => 2,
+        Ok("neural-v5" | "3") => 3,
+        _ => 1,
+    }
+}
 
 #[derive(Clone, Copy)]
 pub struct MapChoice {
@@ -22,7 +57,7 @@ pub struct MapChoice {
     pub file: &'static str,
 }
 
-pub const MAPS: [MapChoice; 4] = [
+pub const MAPS: [MapChoice; 7] = [
     MapChoice {
         name: "经典 H",
         file: "h_1v1.toml",
@@ -38,6 +73,18 @@ pub const MAPS: [MapChoice; 4] = [
     MapChoice {
         name: "外环横梁·实验",
         file: "ring_chord_1v1.toml",
+    },
+    MapChoice {
+        name: "三足环·3人混战",
+        file: "tripod_ring_3ffa.toml",
+    },
+    MapChoice {
+        name: "双层三角·3人候选",
+        file: "layered_triangle_3ffa.toml",
+    },
+    MapChoice {
+        name: "三叶风车·3人候选",
+        file: "three_leaf_windmill_3ffa.toml",
     },
 ];
 
@@ -81,6 +128,9 @@ impl InputMode {
 #[derive(Resource)]
 pub struct DifficultyName(pub &'static str);
 
+#[derive(Resource)]
+pub struct CurrentMapFile(pub String);
+
 /// 关联地块 → 归属学科颜色（中立地块的淡染色用）
 #[derive(Resource, Default)]
 pub struct LinkedTint(pub HashMap<CellIdx, [f32; 4]>);
@@ -100,10 +150,11 @@ pub struct DebugHud {
 #[derive(Resource)]
 pub struct EndInfo {
     pub winner: FactionId,
+    pub winner_name: String,
     pub player_bases: usize,
     pub player_tiles: usize,
-    pub enemy_bases: usize,
-    pub enemy_tiles: usize,
+    pub rival_bases: usize,
+    pub rival_tiles: usize,
 }
 
 /// 棋盘实体已生成标记

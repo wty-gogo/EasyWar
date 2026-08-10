@@ -400,6 +400,15 @@ fn decide(
     None
 }
 
+/// 为强化学习模仿热身提供一次即时规则决策，不推进计时器、不写入意图队列。
+pub(crate) fn decide_now(world: &mut World, controller: &AiController) -> Option<Intent> {
+    let board = Board::load(world);
+    let squads = load_squads(world);
+    let streams = load_streams(world);
+    let factions = world.resource::<Factions>().0.clone();
+    decide(controller, &board, &squads, &streams, &factions)
+}
+
 /// 阵营总兵力 = 据点驻军 + 在途小队（Board 版，AI 评估用）
 pub(crate) fn total_troops_board(
     board: &Board,

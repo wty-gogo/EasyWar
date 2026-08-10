@@ -17,7 +17,7 @@ pub fn update_hud(
     };
     let active = streams.iter().filter(|s| s.active).count();
     text.0 = format!(
-        "难度[{}](1/2/3切换) · 兵流 {} 条 · 小队 {} · 选中 {} 个据点 · {}",
+        "难度[{}](1/2/3/4切换) · 兵流 {} 条 · 小队 {} · 选中 {} 个据点 · {}",
         difficulty.0,
         active,
         squads.iter().count(),

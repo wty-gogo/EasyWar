@@ -37,15 +37,16 @@ crates/logic/src/
   combat.rs     # 双向抵扣 ×3 + 占领
   victory.rs    # 胜负判定
   ai.rs         # AI 决策系统（发 Intent，与玩家同管道）
+  rl.rs         # 固定观察/动作契约 + 外部策略控制器
   bin/headless.rs
 
 crates/app/src/
   main.rs    # 组合根：插件装配、State 注册（<100 行）
-  menu.rs / input.rs / render.rs / overlay.rs / hud.rs / ending.rs / driver.rs
+  menu.rs / input.rs / neural_ai.rs / render.rs / overlay.rs / hud.rs / ending.rs / driver.rs
 ```
 
 `SimTick` 链序（与旧循环严格同构，黄金快照验证过 parity）：
-`apply_intents → economy → streams → movement → combat → victory → ai_decide`
+`apply_intents → economy → streams → movement → combat → victory → ai_decide → policy_decide`
 （AI 在链尾决策，看到本 tick 最新状态；意图在下一 tick 链首统一生效——与旧「update → AI → 立即生效」循环等价）
 
 ## 3. 迁移路径（staging）
