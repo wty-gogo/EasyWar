@@ -16,6 +16,7 @@ pub mod movement;
 pub mod plugin;
 pub mod rl;
 pub mod streams;
+pub mod tactics;
 pub mod victory;
 pub mod world_ext;
 
@@ -28,6 +29,7 @@ pub use map::{
 };
 pub use plugin::{GamePlugin, SimTick, SIM_DT};
 pub use rl::{Policy, PolicyController, PolicyControllers};
+pub use tactics::{estimate_attack, required_arrivals, AttackEstimate};
 
 use bevy_ecs::prelude::*;
 

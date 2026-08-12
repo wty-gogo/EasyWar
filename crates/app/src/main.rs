@@ -10,6 +10,7 @@ mod menu;
 mod neural_ai;
 mod overlay;
 mod render;
+mod telemetry;
 
 use bevy::prelude::*;
 use bevy::window::WindowResolution;
@@ -18,6 +19,21 @@ use easywar_logic::*;
 
 fn main() {
     let root = workspace_assets();
+    let arguments = std::env::args().collect::<Vec<_>>();
+    if let Some(index) = arguments
+        .iter()
+        .position(|argument| argument == "--verify-telemetry")
+    {
+        let path = arguments
+            .get(index + 1)
+            .map(std::path::Path::new)
+            .expect("--verify-telemetry 后必须提供 JSONL 路径");
+        println!(
+            "{}",
+            telemetry::verify_replay(path).expect("真人回放复验失败")
+        );
+        return;
+    }
     let subjects = load_subjects(&root.join("subjects")).expect("词库加载失败");
     let mut list: Vec<SubjectDef> = subjects.into_values().collect();
     list.sort_by(|a, b| a.id.cmp(&b.id)); // 稳定顺序
@@ -57,6 +73,8 @@ fn main() {
     .insert_resource(DebugHud::default())
     .insert_resource(SimAccum::default())
     .insert_resource(neural_ai::NeuralModelResource::embedded())
+    .insert_resource(telemetry::TelemetryRecorder::from_environment())
+    .insert_resource(telemetry::PendingPlayerCommands::default())
     .add_systems(Startup, |mut commands: Commands| {
         commands.spawn(Camera2d);
     })
@@ -65,19 +83,38 @@ fn main() {
     .add_systems(OnExit(AppState::Menu), cleanup::<MenuEntity>)
     .add_systems(
         Update,
-        (menu::menu_input, menu::menu_highlight).run_if(in_state(AppState::Menu)),
+        (
+            menu::menu_input,
+            menu::sync_difficulty_dropdown_label,
+            menu::menu_highlight,
+        )
+            .chain()
+            .run_if(in_state(AppState::Menu)),
     )
     // 对局
     .add_systems(OnEnter(AppState::Playing), driver::enter_playing)
     .add_systems(OnExit(AppState::Playing), driver::exit_playing)
     .add_systems(
+        SimTick,
+        telemetry::capture_ai_commands.after(easywar_logic::rl::policy_decide),
+    )
+    .add_systems(
         Update,
         (
-            driver::drive_sim,
-            driver::check_end,
             input::handle_desktop_input.run_if(input::desktop_input_mode),
             input::handle_touch_input.run_if(input::touch_input_mode),
             input::switch_difficulty,
+            telemetry::capture_player_commands,
+            driver::drive_sim,
+            telemetry::capture_periodic_and_terminal,
+            driver::check_end,
+        )
+            .chain()
+            .run_if(in_state(AppState::Playing)),
+    )
+    .add_systems(
+        Update,
+        (
             render::spawn_board_system,
             render::sync_cells,
             render::sync_squads,

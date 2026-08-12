@@ -12,6 +12,10 @@ from torch import Tensor
 from model import EasyWarActorCritic
 
 
+BASE_OBSERVATION_CHANNELS = easywar_rl.OBSERVATION_CHANNELS
+TEMPORAL_OBSERVATION_CHANNELS = BASE_OBSERVATION_CHANNELS * 2
+
+
 @dataclass(frozen=True)
 class TensorObservation:
     values: Tensor
@@ -26,18 +30,76 @@ class TensorObservation:
         )
 
 
+def to_model_tensors(
+    batch: object,
+    device: torch.device,
+    observation_channels: int,
+    previous_values: Tensor | None = None,
+    reset_indices: list[int] | tuple[int, ...] = (),
+) -> tuple[TensorObservation, Tensor]:
+    """把当前局面与逐环境变化量组合成统一策略输入。"""
+
+    current = to_tensors(batch, device)
+    if 0 < observation_channels <= BASE_OBSERVATION_CHANNELS:
+        return (
+            TensorObservation(
+                values=current.values[:, :observation_channels],
+                masks=current.masks,
+                bases=current.bases,
+            ),
+            current.values,
+        )
+    if observation_channels != TEMPORAL_OBSERVATION_CHANNELS:
+        raise ValueError(f"不支持的模型观察通道数：{observation_channels}")
+    delta = (
+        torch.zeros_like(current.values)
+        if previous_values is None
+        else current.values - previous_values
+    )
+    if reset_indices:
+        indices = torch.as_tensor(reset_indices, dtype=torch.long, device=device)
+        delta = delta.clone()
+        delta.index_fill_(0, indices, 0.0)
+    return (
+        TensorObservation(
+            values=torch.cat((current.values, delta), dim=1),
+            masks=current.masks,
+            bases=current.bases,
+        ),
+        current.values,
+    )
+
+
+def model_input_values(model: EasyWarActorCritic, values: Tensor) -> Tensor:
+    """让旧观察锚点读取新模型输入中的兼容通道前缀。"""
+
+    expected = model.observation_channels
+    actual = values.shape[1]
+    if actual == expected:
+        return values
+    if actual > expected:
+        return values[:, :expected]
+    if expected == actual * 2:
+        return torch.cat((values, torch.zeros_like(values)), dim=1)
+    raise ValueError(f"观察通道不兼容：模型需要 {expected}，实际 {actual}")
+
+
 class HistoricalOpponentPool:
-    """把多个冻结检查点稳定分配到批量环境，作为确定性历史对手。"""
+    """把多个冻结检查点稳定分配到批量环境，组成历史对手池。"""
 
     def __init__(
         self,
         paths: list[Path],
         device: torch.device,
         environment_count: int,
+        temperature: float = 0.0,
     ) -> None:
         if not paths:
             raise ValueError("历史模型对手池不能为空")
+        if temperature < 0.0:
+            raise ValueError("历史对手采样温度不能小于 0")
         self.models = [self._load_model(path, device) for path in paths]
+        self.temperature = temperature
         self.assignments = torch.arange(environment_count, device=device) % len(
             self.models
         )
@@ -45,7 +107,11 @@ class HistoricalOpponentPool:
     @staticmethod
     def _load_model(path: Path, device: torch.device) -> EasyWarActorCritic:
         checkpoint = torch.load(path, map_location=device, weights_only=True)
-        model = build_model(device, checkpoint_strategy_count(checkpoint))
+        model = build_model(
+            device,
+            checkpoint_strategy_count(checkpoint),
+            checkpoint_observation_channels(checkpoint),
+        )
         load_model_weights(model, checkpoint)
         model.eval()
         model.requires_grad_(False)
@@ -64,10 +130,11 @@ class HistoricalOpponentPool:
                     continue
                 selected = observation.select(indices)
                 selected_actions, _, _ = model.act(
-                    selected.values,
+                    model_input_values(model, selected.values),
                     selected.bases,
                     selected.masks,
-                    deterministic=True,
+                    deterministic=self.temperature == 0.0,
+                    temperature=self.temperature or 1.0,
                 )
                 actions.index_copy_(0, indices, selected_actions)
         return actions
@@ -144,15 +211,29 @@ def to_tensors(batch: object, device: torch.device) -> TensorObservation:
 
 
 def build_model(
-    device: torch.device, strategy_count: int = 1
+    device: torch.device,
+    strategy_count: int = 1,
+    observation_channels: int = BASE_OBSERVATION_CHANNELS,
 ) -> EasyWarActorCritic:
     return EasyWarActorCritic(
-        easywar_rl.OBSERVATION_CHANNELS,
+        observation_channels,
         easywar_rl.MAX_HEIGHT,
         easywar_rl.MAX_WIDTH,
         easywar_rl.MAX_BASES,
         strategy_count=strategy_count,
     ).to(device)
+
+
+def checkpoint_observation_channels(checkpoint: dict[str, object]) -> int:
+    state = checkpoint.get("training_state")
+    if isinstance(state, dict) and "observation_channels" in state:
+        return int(state["observation_channels"])
+    model_state = checkpoint.get("model")
+    if isinstance(model_state, dict):
+        first_layer = model_state.get("encoder.0.weight")
+        if isinstance(first_layer, Tensor):
+            return int(first_layer.shape[1])
+    return BASE_OBSERVATION_CHANNELS
 
 
 def checkpoint_strategy_count(checkpoint: dict[str, object]) -> int:
@@ -179,8 +260,32 @@ def load_model_weights(
         shared = min(source[embedding_key].shape[0], expanded.shape[0])
         expanded[:shared] = source[embedding_key][:shared]
         source[embedding_key] = expanded
+    first_layer_key = "encoder.0.weight"
+    if (
+        first_layer_key in source
+        and source[first_layer_key].shape != target[first_layer_key].shape
+    ):
+        old = source[first_layer_key]
+        expanded = target[first_layer_key].clone()
+        if (
+            old.shape[0] != expanded.shape[0]
+            or old.shape[2:] != expanded.shape[2:]
+            or old.shape[1] > expanded.shape[1]
+        ):
+            raise ValueError(
+                f"首层卷积权重不兼容：来源 {tuple(old.shape)}，目标 {tuple(expanded.shape)}"
+            )
+        expanded[:, : old.shape[1]] = old
+        expanded[:, old.shape[1] :] = 0.0
+        source[first_layer_key] = expanded
     missing, unexpected = model.load_state_dict(source, strict=False)
-    allowed_missing = {embedding_key}
+    allowed_missing = {
+        embedding_key,
+        "source_context_projection.weight",
+        "source_context_projection.bias",
+        "target_context_projection.weight",
+        "target_context_projection.bias",
+    }
     if set(missing) - allowed_missing or unexpected:
         raise ValueError(
             f"模型权重不兼容：缺少 {missing}，多出 {unexpected}"

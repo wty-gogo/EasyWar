@@ -14,6 +14,12 @@ pub const PLAYER: FactionId = 1;
 pub enum DifficultyKind {
     Rule(fn() -> AiParams),
     NeuralV5,
+    NeuralV6,
+    NeuralV7,
+    NeuralV8,
+    NeuralV9,
+    NeuralV10,
+    NeuralV11,
 }
 
 #[derive(Clone, Copy)]
@@ -22,7 +28,7 @@ pub struct DifficultyChoice {
     pub kind: DifficultyKind,
 }
 
-pub const DIFFICULTIES: [DifficultyChoice; 4] = [
+pub const DIFFICULTIES: [DifficultyChoice; 10] = [
     DifficultyChoice {
         name: "简单",
         kind: DifficultyKind::Rule(AiParams::easy),
@@ -39,6 +45,30 @@ pub const DIFFICULTIES: [DifficultyChoice; 4] = [
         name: "神经模型 V5",
         kind: DifficultyKind::NeuralV5,
     },
+    DifficultyChoice {
+        name: "神经模型 V6",
+        kind: DifficultyKind::NeuralV6,
+    },
+    DifficultyChoice {
+        name: "神经模型 V7·战术实验",
+        kind: DifficultyKind::NeuralV7,
+    },
+    DifficultyChoice {
+        name: "神经模型 V8·强化实验",
+        kind: DifficultyKind::NeuralV8,
+    },
+    DifficultyChoice {
+        name: "神经模型 V9·蓄兵实验",
+        kind: DifficultyKind::NeuralV9,
+    },
+    DifficultyChoice {
+        name: "神经模型 V10·长程实验",
+        kind: DifficultyKind::NeuralV10,
+    },
+    DifficultyChoice {
+        name: "神经模型 V11·自博弈",
+        kind: DifficultyKind::NeuralV11,
+    },
 ];
 
 pub fn configured_difficulty() -> usize {
@@ -47,6 +77,12 @@ pub fn configured_difficulty() -> usize {
         Ok("normal" | "1") => 1,
         Ok("hard" | "2") => 2,
         Ok("neural-v5" | "3") => 3,
+        Ok("neural-v6" | "4") => 4,
+        Ok("neural-v7" | "5") => 5,
+        Ok("neural-v8" | "6") => 6,
+        Ok("neural-v9" | "7") => 7,
+        Ok("neural-v10" | "8") => 8,
+        Ok("neural-v11" | "9") => 9,
         _ => 1,
     }
 }
@@ -184,7 +220,6 @@ pub struct MenuButton {
 #[derive(Clone, Copy)]
 pub enum MenuAction {
     Subject(usize),
-    Difficulty(usize),
     Map(usize),
     Start,
 }

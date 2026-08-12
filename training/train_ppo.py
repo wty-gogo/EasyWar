@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import random
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,16 +21,21 @@ from evaluation import (
     passes_validation_gate,
 )
 from runtime import (
+    BASE_OBSERVATION_CHANNELS,
     HistoricalOpponentPool,
+    TEMPORAL_OBSERVATION_CHANNELS,
     TensorObservation,
     build_model,
+    checkpoint_observation_channels,
     checkpoint_strategy_count,
     choose_device,
     environment_signature,
     load_model_weights,
+    model_input_values,
     repository_root,
     resolve_artifact_path,
     seed_everything,
+    to_model_tensors,
     to_tensors,
     training_map_names,
     training_maps,
@@ -37,7 +43,7 @@ from runtime import (
 )
 
 
-CHECKPOINT_SCHEMA_VERSION = 7
+CHECKPOINT_SCHEMA_VERSION = 10
 TERMINAL_NAMES = ("Won", "Lost", "Stalemate", "CycleDetected", "BudgetExceeded")
 
 
@@ -58,7 +64,24 @@ def parse_args() -> argparse.Namespace:
         default=[],
         help="使用一个或多个冻结检查点替代规则对手，并按环境稳定轮换",
     )
+    parser.add_argument(
+        "--historical-opponent-temperature",
+        type=float,
+        default=0.0,
+        help="冻结历史对手的动作采样温度；0 为确定性动作",
+    )
     parser.add_argument("--num-envs", type=int, default=24)
+    parser.add_argument(
+        "--temporal-delta",
+        action="store_true",
+        help="在当前局面后追加相对上次决策的变化量，不引入显式策略标签",
+    )
+    parser.add_argument(
+        "--tactical-actions",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="只向模型开放共享成本估算认为当前可执行的前沿动作",
+    )
     parser.add_argument(
         "--strategy-count",
         type=int,
@@ -115,7 +138,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gae-lambda", type=float, default=0.95)
     parser.add_argument("--clip", type=float, default=0.2)
     parser.add_argument("--entropy", type=float, default=0.01)
+    parser.add_argument(
+        "--rollout-temperature",
+        type=float,
+        default=1.0,
+        help="PPO 采样温度；小于 1 时围绕当前最优动作做有限探索",
+    )
     parser.add_argument("--value-coef", type=float, default=0.5)
+    parser.add_argument(
+        "--terminal-only-reward",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="仅使用胜负和异常终局回报，忽略进行中的规则塑形分数",
+    )
     parser.add_argument("--threads", type=int, default=0)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--device", default="auto")
@@ -185,10 +220,16 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("早停耐心值不能为负数")
     if args.anchor_kl_coef < 0.0:
         raise ValueError("锚点 KL 系数不能为负数")
+    if getattr(args, "rollout_temperature", 1.0) <= 0.0:
+        raise ValueError("PPO 采样温度必须大于 0")
+    if getattr(args, "historical_opponent_temperature", 0.0) < 0.0:
+        raise ValueError("历史对手采样温度不能小于 0")
     if args.strategy_diversity_coef < 0.0:
         raise ValueError("策略多样性系数不能为负数")
     if args.strategy_specialization_coef < 0.0:
         raise ValueError("策略专门化系数不能为负数")
+    if getattr(args, "temporal_delta", False) and args.strategy_count != 1:
+        raise ValueError("时间感知课程只允许单一统一策略")
     if args.anchor_kl_coef > 0.0 and args.anchor_checkpoint is None:
         raise ValueError("启用锚点 KL 约束时必须提供 --anchor-checkpoint")
     if not 0.0 <= args.minimum_validation_completion <= 1.0:
@@ -228,6 +269,14 @@ def anchor_checkpoint_path(args: argparse.Namespace) -> str | None:
         str(resolve_artifact_path(args.anchor_checkpoint).resolve())
         if args.anchor_checkpoint is not None
         else None
+    )
+
+
+def configured_observation_channels(args: argparse.Namespace) -> int:
+    return (
+        TEMPORAL_OBSERVATION_CHANNELS
+        if getattr(args, "temporal_delta", False)
+        else BASE_OBSERVATION_CHANNELS
     )
 
 
@@ -387,6 +436,18 @@ def validate_resume_checkpoint(
         raise ValueError("恢复训练必须保持相同抗遗忘锚点")
     if state.get("anchor_kl_coef") != args.anchor_kl_coef:
         raise ValueError("恢复训练必须保持相同锚点 KL 系数")
+    if state.get("rollout_temperature", 1.0) != getattr(
+        args, "rollout_temperature", 1.0
+    ):
+        raise ValueError("恢复训练必须保持相同 PPO 采样温度")
+    if state.get("historical_opponent_temperature", 0.0) != getattr(
+        args, "historical_opponent_temperature", 0.0
+    ):
+        raise ValueError("恢复训练必须保持相同历史对手采样温度")
+    if state.get("terminal_only_reward", False) != getattr(
+        args, "terminal_only_reward", False
+    ):
+        raise ValueError("恢复训练必须保持相同终局回报配置")
     if state.get("strategy_count", 1) != args.strategy_count:
         raise ValueError("恢复训练必须保持相同可控策略数量")
     if state.get("strategy_diversity_coef", 0.0) != args.strategy_diversity_coef:
@@ -395,6 +456,12 @@ def validate_resume_checkpoint(
         raise ValueError("恢复训练必须保持相同策略专门化系数")
     if state.get("strategy_adapter_only", False) != args.strategy_adapter_only:
         raise ValueError("恢复训练必须保持相同策略适配器模式")
+    if state.get("tactical_actions", False) != getattr(args, "tactical_actions", False):
+        raise ValueError("恢复训练必须保持相同战术动作过滤配置")
+    if state.get(
+        "observation_channels", BASE_OBSERVATION_CHANNELS
+    ) != configured_observation_channels(args):
+        raise ValueError("恢复训练必须保持相同时间观察配置")
     if checkpoint.get("environment_signature") != environment_signature():
         raise ValueError("检查点的观察或动作空间与当前环境不兼容")
     if args.imitation_updates < state["imitation_updates_completed"]:
@@ -426,10 +493,17 @@ def checkpoint_payload(
             ],
             "anchor_checkpoint": anchor_checkpoint_path(args),
             "anchor_kl_coef": args.anchor_kl_coef,
+            "rollout_temperature": getattr(args, "rollout_temperature", 1.0),
+            "historical_opponent_temperature": getattr(
+                args, "historical_opponent_temperature", 0.0
+            ),
+            "terminal_only_reward": getattr(args, "terminal_only_reward", False),
             "strategy_count": args.strategy_count,
             "strategy_diversity_coef": args.strategy_diversity_coef,
             "strategy_specialization_coef": args.strategy_specialization_coef,
             "strategy_adapter_only": args.strategy_adapter_only,
+            "tactical_actions": getattr(args, "tactical_actions", False),
+            "observation_channels": configured_observation_channels(args),
             "seed": args.seed,
             "next_seed": next_seed,
             "imitation_updates_completed": imitation_updates_completed,
@@ -479,24 +553,39 @@ def build_environment(args: argparse.Namespace, seed: int) -> easywar_rl.BatchEn
         map_transforms=training_transforms(args.phase),
         alternate_seats=True,
         external_opponent=bool(args.historical_opponent),
+        tactical_actions=getattr(args, "tactical_actions", False),
         alternate_submit_order=True,
     )
+
+
+def learning_rewards(
+    rewards: list[float], end_names: list[str], terminal_only: bool
+) -> list[float]:
+    """按课程选择学习回报；终局模式不让规则塑形替模型定义打法。"""
+
+    if not terminal_only:
+        return rewards
+    return [
+        0.0 if end_name == "Ongoing" else reward
+        for reward, end_name in zip(rewards, end_names, strict=True)
+    ]
 
 
 def reset_finished(
     environment: easywar_rl.BatchEnv,
     transition: object,
     next_seed: int,
-) -> tuple[object, int]:
+) -> tuple[object, int, list[int]]:
     terminal_indices = [
         index for index, code in enumerate(transition.end_codes) if code != 0
     ]
     if not terminal_indices:
-        return transition, next_seed
+        return transition, next_seed, []
     reset_seeds = list(range(next_seed, next_seed + len(terminal_indices)))
     return (
         environment.reset_indices(terminal_indices, reset_seeds),
         next_seed + len(terminal_indices),
+        terminal_indices,
     )
 
 
@@ -507,7 +596,7 @@ def advance_environment(
     opponent_pool: HistoricalOpponentPool | None,
     threads: int,
     next_seed: int,
-) -> tuple[object, object, TensorObservation | None, int]:
+) -> tuple[object, object, TensorObservation | None, int, list[int]]:
     if opponent_pool is None:
         transition = environment.step(
             learner_actions.detach().cpu().tolist(),
@@ -521,13 +610,15 @@ def advance_environment(
             opponent_pool.actions(opponent_observation).cpu().tolist(),
             threads,
         )
-    batch, next_seed = reset_finished(environment, transition, next_seed)
+    batch, next_seed, reset_indices = reset_finished(
+        environment, transition, next_seed
+    )
     next_opponent = (
         None
         if opponent_pool is None
         else to_tensors(environment.observe_opponents(), learner_actions.device)
     )
-    return transition, batch, next_opponent, next_seed
+    return transition, batch, next_opponent, next_seed, reset_indices
 
 
 def discrete_entropy(values: list[int]) -> float:
@@ -636,6 +727,7 @@ def run_validation(
                 + opponent_index * 10_000
             ),
             strategy_id=strategy_id,
+            tactical_actions=getattr(args, "tactical_actions", False),
         )
         for map_index, map_name in enumerate(training_map_names(args.phase))
         for opponent_index, opponent in enumerate(args.validation_opponents)
@@ -661,7 +753,8 @@ def main() -> None:
     checkpoint_path = resolve_artifact_path(args.checkpoint)
     best_checkpoint_path = resolve_artifact_path(args.best_checkpoint)
     report_path = resolve_artifact_path(args.report)
-    model = build_model(device, args.strategy_count)
+    observation_channels = configured_observation_channels(args)
+    model = build_model(device, args.strategy_count, observation_channels)
     optimized_parameters = (
         configure_strategy_adapter_training(model)
         if args.strategy_adapter_only
@@ -699,7 +792,9 @@ def main() -> None:
         configured_anchor_path = resolve_artifact_path(args.anchor_checkpoint)
         anchor_checkpoint = load_checkpoint(configured_anchor_path, device)
         anchor_model = build_model(
-            device, checkpoint_strategy_count(anchor_checkpoint)
+            device,
+            checkpoint_strategy_count(anchor_checkpoint),
+            checkpoint_observation_channels(anchor_checkpoint),
         )
         load_model_weights(anchor_model, anchor_checkpoint)
         anchor_model.eval()
@@ -719,12 +814,19 @@ def main() -> None:
     environment = build_environment(args, environment_seed)
     opponent_paths = historical_opponent_paths(args)
     opponent_pool = (
-        HistoricalOpponentPool(opponent_paths, device, args.num_envs)
+        HistoricalOpponentPool(
+            opponent_paths,
+            device,
+            args.num_envs,
+            getattr(args, "historical_opponent_temperature", 0.0),
+        )
         if opponent_paths
         else None
     )
     next_seed = environment_seed + args.num_envs
-    current = to_tensors(environment.observe(), device)
+    current, previous_values = to_model_tensors(
+        environment.observe(), device, observation_channels
+    )
     strategy_ids = environment_strategy_ids(args, device)
     opponent_current = (
         to_tensors(environment.observe_opponents(), device)
@@ -781,27 +883,56 @@ def main() -> None:
             )
             print(f"初始模型已通过门禁并保存：{best_checkpoint_path}")
 
+    # 在线 DAgger 只训练“当前这一秒”会快速遗忘开局；用固定容量蓄水池保留整局各阶段。
+    imitation_replay: list[tuple[TensorObservation, Tensor, Tensor]] = []
+    replay_seen = 0
+    replay_capacity = 64
+    replay_chunks_per_update = 2
+
     for update in range(imitation_completed + 1, args.imitation_updates + 1):
         acted_on_observation = current.values
         expert = torch.as_tensor(
             environment.expert_actions(args.teacher), dtype=torch.long, device=device
         )
-        logits, _ = model.logits_and_value(
-            current.values, current.bases, current.masks, strategy_ids
+        sampled_replay = random.sample(
+            imitation_replay,
+            min(replay_chunks_per_update, len(imitation_replay)),
         )
-        sample_weights = torch.where(expert == 0, 1.0, args.command_weight)
+        training_observations = [current, *(entry[0] for entry in sampled_replay)]
+        training_experts = [expert, *(entry[1] for entry in sampled_replay)]
+        training_strategies = [
+            strategy_ids,
+            *(entry[2] for entry in sampled_replay),
+        ]
+        replay_values = torch.cat(
+            [observation.values.to(device) for observation in training_observations]
+        )
+        replay_masks = torch.cat(
+            [observation.masks.to(device) for observation in training_observations]
+        )
+        replay_bases = torch.cat(
+            [observation.bases.to(device) for observation in training_observations]
+        )
+        replay_expert = torch.cat([labels.to(device) for labels in training_experts])
+        replay_strategies = torch.cat(
+            [strategies.to(device) for strategies in training_strategies]
+        )
+        logits, _ = model.logits_and_value(
+            replay_values, replay_bases, replay_masks, replay_strategies
+        )
+        sample_weights = torch.where(replay_expert == 0, 1.0, args.command_weight)
         imitation_loss = (
-            F.cross_entropy(logits, expert, reduction="none") * sample_weights
+            F.cross_entropy(logits, replay_expert, reduction="none") * sample_weights
         ).mean()
         if anchor_model is None:
             anchor_kl = torch.zeros((), device=device)
         else:
             with torch.no_grad():
                 anchor_logits, _ = anchor_model.logits_and_value(
-                    current.values,
-                    current.bases,
-                    current.masks,
-                    torch.zeros_like(strategy_ids),
+                    model_input_values(anchor_model, replay_values),
+                    replay_bases,
+                    replay_masks,
+                    torch.zeros_like(replay_strategies),
                 )
             anchor_kl = categorical_kl(anchor_logits, logits)
         loss = imitation_loss + args.anchor_kl_coef * anchor_kl
@@ -810,10 +941,30 @@ def main() -> None:
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
         optimizer.step()
 
-        prediction = logits.argmax(dim=-1)
+        with torch.no_grad():
+            current_logits, _ = model.logits_and_value(
+                current.values, current.bases, current.masks, strategy_ids
+            )
+        prediction = current_logits.argmax(dim=-1)
+        replay_entry = (
+            TensorObservation(
+                values=current.values.detach().cpu(),
+                masks=current.masks.detach().cpu(),
+                bases=current.bases.detach().cpu(),
+            ),
+            expert.detach().cpu(),
+            strategy_ids.detach().cpu(),
+        )
+        replay_seen += 1
+        if len(imitation_replay) < replay_capacity:
+            imitation_replay.append(replay_entry)
+        else:
+            replacement = random.randrange(replay_seen)
+            if replacement < replay_capacity:
+                imitation_replay[replacement] = replay_entry
         use_model = torch.rand(args.num_envs, device=device) < args.dagger_model_prob
         rollout_action = torch.where(use_model, prediction, expert)
-        transition, batch, opponent_current, next_seed = advance_environment(
+        transition, batch, opponent_current, next_seed, reset_indices = advance_environment(
             environment,
             rollout_action,
             opponent_current,
@@ -821,7 +972,13 @@ def main() -> None:
             args.threads,
             next_seed,
         )
-        current = to_tensors(batch, device)
+        current, previous_values = to_model_tensors(
+            batch,
+            device,
+            observation_channels,
+            previous_values,
+            reset_indices,
+        )
         imitation_completed = update
 
         if update == 1 or update % 50 == 0 or update == args.imitation_updates:
@@ -886,9 +1043,13 @@ def main() -> None:
         for _ in range(args.rollout_steps):
             with torch.no_grad():
                 action, log_prob, value = model.act(
-                    current.values, current.bases, current.masks, strategy_ids
+                    current.values,
+                    current.bases,
+                    current.masks,
+                    strategy_ids,
+                    temperature=args.rollout_temperature,
                 )
-            transition, batch, opponent_current, next_seed = advance_environment(
+            transition, batch, opponent_current, next_seed, reset_indices = advance_environment(
                 environment,
                 action,
                 opponent_current,
@@ -896,7 +1057,14 @@ def main() -> None:
                 args.threads,
                 next_seed,
             )
-            reward = torch.as_tensor(transition.rewards, device=device)
+            reward = torch.as_tensor(
+                learning_rewards(
+                    transition.rewards,
+                    transition.end_names,
+                    getattr(args, "terminal_only_reward", False),
+                ),
+                device=device,
+            )
             done = torch.as_tensor(
                 [code != 0 for code in transition.end_codes], device=device
             ).float()
@@ -912,7 +1080,13 @@ def main() -> None:
             for index, name in enumerate(transition.end_names):
                 if name != "Ongoing":
                     completed_by_factor[training_factor_label(args, index)][name] += 1
-            current = to_tensors(batch, device)
+            current, previous_values = to_model_tensors(
+                batch,
+                device,
+                observation_channels,
+                previous_values,
+                reset_indices,
+            )
 
         with torch.no_grad():
             _, next_value = model.logits_and_value(
@@ -967,6 +1141,7 @@ def main() -> None:
                         flat_masks[indices],
                         flat_actions[indices],
                         flat_strategies[indices],
+                        temperature=args.rollout_temperature,
                     )
                 )
                 if anchor_model is None:
@@ -974,7 +1149,7 @@ def main() -> None:
                 else:
                     with torch.no_grad():
                         anchor_logits, _ = anchor_model.logits_and_value(
-                            flat_observations[indices],
+                            model_input_values(anchor_model, flat_observations[indices]),
                             flat_bases[indices],
                             flat_masks[indices],
                             torch.zeros_like(flat_strategies[indices]),

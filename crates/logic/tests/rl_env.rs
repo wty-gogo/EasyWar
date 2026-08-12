@@ -1,6 +1,7 @@
 use easywar_logic::rl::{
-    decode_action, step_batch, step_batch_external, EpisodeEnd, RlAction, RlConfig, RlEnv,
-    SeatTransform, SubmitOrder, RL_ACTION_COUNT, RL_MAX_WIDTH, RL_OBSERVATION_LEN,
+    decode_action, encode_set_stream_action, step_batch, step_batch_external, EpisodeEnd, RlAction,
+    RlConfig, RlEnv, SeatTransform, SubmitOrder, RL_ACTION_COUNT, RL_MAX_CELLS, RL_MAX_WIDTH,
+    RL_OBSERVATION_LEN,
 };
 use easywar_logic::AiParams;
 use std::path::PathBuf;
@@ -18,6 +19,7 @@ fn config(seed: u64) -> RlConfig {
         opponent_faction: 2,
         opponent_params: AiParams::normal(),
         external_opponent: false,
+        tactical_actions: false,
         submit_order: SubmitOrder::LearnerFirst,
         seat_transform: SeatTransform::Identity,
         decision_interval_seconds: 1.0,
@@ -59,6 +61,40 @@ fn observation_and_action_space_are_fixed_and_masked() {
 }
 
 #[test]
+fn observation_exposes_target_recovery_rate() {
+    let mut environment = RlEnv::new(config(8)).expect("创建强化学习环境失败");
+    let observation = environment.observe().expect("读取观察失败");
+    let physics_fixed_grid = 6 * RL_MAX_WIDTH + 2;
+    assert!(
+        (observation.values[17 * RL_MAX_CELLS + physics_fixed_grid] - 0.5).abs() < 0.001,
+        "中立物理据点应暴露 2.5/秒、按5归一的恢复特征"
+    );
+}
+
+#[test]
+fn tactically_impossible_long_attack_receives_penalty() {
+    let mut external = config(10);
+    external.external_opponent = true;
+    let mut idle = RlEnv::new(external.clone()).expect("创建等待环境失败");
+    let mut attack = RlEnv::new(external).expect("创建进攻环境失败");
+    let observation = attack.observe().expect("读取观察失败");
+    let player_slot = observation
+        .base_cells
+        .iter()
+        .position(|&cell| cell >= 0 && observation.values[3 * RL_MAX_CELLS + cell as usize] > 0.5)
+        .expect("应找到玩家据点槽位");
+    let math_fixed_grid = RL_MAX_WIDTH + 11;
+    let action = encode_set_stream_action(player_slot, math_fixed_grid).expect("动作应可编码");
+    assert!(observation.action_mask[action]);
+    let idle_step = idle.step_external(0, 0).expect("推进等待环境失败");
+    let attack_step = attack.step_external(action, 0).expect("推进进攻环境失败");
+    assert!(
+        attack_step.reward < idle_step.reward - 0.005,
+        "跨越中间据点的无效远征应受到战术惩罚"
+    );
+}
+
+#[test]
 fn seat_transform_swaps_factions_and_aligns_base_scan_order() {
     let mut warmup = config(9);
     warmup.seat_transform = SeatTransform::Rotational;
@@ -89,21 +125,103 @@ fn legal_player_level_action_is_applied_by_authoritative_logic() {
 
 #[test]
 fn rule_expert_only_returns_legal_player_actions() {
-    let mut environment = RlEnv::new(config(12)).expect("创建强化学习环境失败");
-    for _ in 0..20 {
-        let observation = environment.observe().expect("读取观察失败");
+    for tactical_actions in [false, true] {
+        let mut configured = config(12);
+        configured.tactical_actions = tactical_actions;
+        let mut environment = RlEnv::new(configured).expect("创建强化学习环境失败");
+        for _ in 0..20 {
+            let observation = environment.observe().expect("读取观察失败");
+            let action = environment
+                .expert_action(AiParams::normal())
+                .expect("读取规则老师动作失败");
+            assert!(
+                observation.action_mask[action],
+                "规则老师不得绕过玩家合法动作掩码"
+            );
+            let step = environment.step(action).expect("执行规则老师动作失败");
+            if step.end.is_terminal() {
+                break;
+            }
+        }
+    }
+}
+
+#[test]
+fn tactical_hard_expert_keeps_a_nonzero_hard_ceiling() {
+    let maps = ["dual_ladder_1v1.toml", "braided_rings_1v1.toml"];
+    let variants = [
+        (SeatTransform::Identity, SubmitOrder::LearnerFirst),
+        (SeatTransform::Identity, SubmitOrder::OpponentFirst),
+        (SeatTransform::Vertical, SubmitOrder::LearnerFirst),
+        (SeatTransform::Vertical, SubmitOrder::OpponentFirst),
+    ];
+    let wins = maps
+        .into_iter()
+        .flat_map(|map| variants.into_iter().map(move |variant| (map, variant)))
+        .filter(|(map, (seat, order))| {
+            let mut configured = config(940_000);
+            configured.map_path = assets_dir().join("maps").join(map);
+            configured.opponent_params = AiParams::hard();
+            configured.tactical_actions = true;
+            configured.seat_transform = *seat;
+            configured.submit_order = *order;
+            configured.max_decisions = 600;
+            let mut environment = RlEnv::new(configured).expect("创建困难专家上限环境失败");
+            (0..600)
+                .find_map(|_| {
+                    let action = environment
+                        .expert_action(AiParams::hard())
+                        .expect("读取困难规则专家动作失败");
+                    let step = environment.step(action).expect("推进困难专家对局失败");
+                    step.end
+                        .is_terminal()
+                        .then_some(step.end == EpisodeEnd::Won)
+                })
+                .unwrap_or(false)
+        })
+        .count();
+
+    assert!(
+        wins > 0,
+        "困难规则专家经过战术动作边界后不应在两张训练地图的四向控制中全败"
+    );
+}
+
+#[test]
+fn tactical_mask_keeps_rule_expert_frontline_staging_actions() {
+    let mut configured = config(19);
+    configured.map_path = assets_dir().join("maps/dual_ladder_1v1.toml");
+    configured.opponent_params = AiParams::hard();
+    configured.tactical_actions = true;
+    let mut environment = RlEnv::new(configured).expect("创建战术训练环境失败");
+    let mut found_staging = false;
+
+    for _ in 0..600 {
+        let observation = environment.observe().expect("读取战术观察失败");
         let action = environment
-            .expert_action(AiParams::normal())
-            .expect("读取规则老师动作失败");
-        assert!(
-            observation.action_mask[action],
-            "规则老师不得绕过玩家合法动作掩码"
-        );
-        let step = environment.step(action).expect("执行规则老师动作失败");
+            .expert_action(AiParams::hard())
+            .expect("读取困难规则老师动作失败");
+        if let RlAction::SetStream { target_grid, .. } =
+            decode_action(action).expect("规则老师动作必须可解码")
+        {
+            let targets_owned_base = observation.values[2 * RL_MAX_CELLS + target_grid] > 0.5
+                && observation.values[3 * RL_MAX_CELLS + target_grid] > 0.5;
+            if targets_owned_base {
+                assert!(
+                    observation.action_mask[action],
+                    "规则老师的前线蓄兵动作必须被战术掩码保留"
+                );
+                found_staging = true;
+                break;
+            }
+        }
+        let step = environment.step(action).expect("推进规则老师轨迹失败");
         if step.end.is_terminal() {
             break;
         }
     }
+
+    assert!(found_staging, "困难规则老师应在双线地图上执行前线蓄兵");
 }
 
 #[test]
@@ -111,7 +229,9 @@ fn stagnation_is_distinct_from_engineering_budget() {
     let mut idle = config(14);
     idle.stagnation_seconds = 1.0;
     let mut environment = RlEnv::new(idle).expect("创建强化学习环境失败");
-    assert_eq!(environment.step(0).unwrap().end, EpisodeEnd::Stalemate);
+    let step = environment.step(0).unwrap();
+    assert_eq!(step.end, EpisodeEnd::Stalemate);
+    assert_eq!(step.reward, -1.1);
 }
 
 #[test]
@@ -120,7 +240,9 @@ fn engineering_budget_is_not_reported_as_a_normal_timeout() {
     short.max_decisions = 2;
     let mut environment = RlEnv::new(short).expect("创建强化学习环境失败");
     assert_eq!(environment.step(0).unwrap().end, EpisodeEnd::Ongoing);
-    assert_eq!(environment.step(0).unwrap().end, EpisodeEnd::BudgetExceeded);
+    let step = environment.step(0).unwrap();
+    assert_eq!(step.end, EpisodeEnd::BudgetExceeded);
+    assert_eq!(step.reward, -1.1);
 }
 
 #[test]

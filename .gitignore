@@ -3,5 +3,6 @@
 /training/.venv
 /training/checkpoints
 /training/runs
+/training/telemetry
 __pycache__/
 *.pyc

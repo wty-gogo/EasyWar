@@ -66,6 +66,7 @@ impl PyBatchEnv {
         map_transforms=None,
         alternate_seats=true,
         external_opponent=false,
+        tactical_actions=false,
         alternate_submit_order=true,
         variant_offset=0,
         rule_opponents=None
@@ -83,6 +84,7 @@ impl PyBatchEnv {
         map_transforms: Option<Vec<String>>,
         alternate_seats: bool,
         external_opponent: bool,
+        tactical_actions: bool,
         alternate_submit_order: bool,
         variant_offset: usize,
         rule_opponents: Option<Vec<String>>,
@@ -121,6 +123,7 @@ impl PyBatchEnv {
                     opponent_faction: 2,
                     opponent_params: opponent_pool[opponent_index],
                     external_opponent,
+                    tactical_actions,
                     submit_order: if alternate_submit_order && variant / 2 % 2 == 1 {
                         SubmitOrder::OpponentFirst
                     } else {

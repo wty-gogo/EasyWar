@@ -150,6 +150,44 @@ impl Board {
             + self.rules.garrison_cap_per_tile * self.owned_linked(base) as f32
     }
 
+    pub(crate) fn cell_recovery_per_sec(&self, cell: CellIdx) -> f32 {
+        match self.kind[cell] {
+            CellKind::Base if self.owner[cell] == NEUTRAL => self
+                .bases
+                .iter()
+                .find(|base| base.cell == cell)
+                .map(|base| base.production_base)
+                .unwrap_or(0.0),
+            CellKind::Base => self
+                .bases
+                .iter()
+                .find(|base| base.cell == cell)
+                .map(|base| self.base_production(base))
+                .unwrap_or(0.0),
+            CellKind::Plain | CellKind::LinkedTile => self.rules.regen_per_sec,
+            CellKind::Void => 0.0,
+        }
+    }
+
+    pub(crate) fn projected_garrison(
+        &self,
+        cell: CellIdx,
+        recovery_per_sec: f32,
+        seconds: f32,
+    ) -> f32 {
+        let cap = match self.kind[cell] {
+            CellKind::Base if self.owner[cell] == NEUTRAL => self.garrison_max[cell],
+            CellKind::Base => self
+                .bases
+                .iter()
+                .find(|base| base.cell == cell)
+                .map(|base| self.base_garrison_cap(base))
+                .unwrap_or(self.garrison[cell]),
+            _ => self.garrison_max[cell],
+        };
+        (self.garrison[cell] + recovery_per_sec * seconds).min(cap)
+    }
+
     /// 纯最短路径（按格数），等长时优先己方格子。
     /// Dijkstra：进入每格代价 = 1 + ε·(非己方)。逐行移植自旧 model.rs。
     pub(crate) fn find_path(

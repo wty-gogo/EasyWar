@@ -4,19 +4,13 @@ use crate::board::Board;
 use crate::components::*;
 use crate::intents::recall_stream;
 use crate::plugin::SIM_DT;
+use crate::tactics::theoretical_wave_troops;
 use crate::world_ext::{load_streams, write_stream};
 use bevy_ecs::prelude::*;
 
 /// 根据当前驻军计算下一波整数兵力，并返回留给下一波的小数额度。
 ///
 /// `squad_max_size` 沿用地图字段名，动态规则里表示 40 兵以内的基础波次兵力。
-fn theoretical_wave_troops(rules: Rules, garrison: f32) -> f32 {
-    let step = rules.squad_growth_garrison_step;
-    let linear_excess = (garrison.min(rules.squad_soft_cap_garrison) - step).max(0.0);
-    let overflow = (garrison - rules.squad_soft_cap_garrison).max(0.0);
-    rules.squad_max_size + linear_excess / step + (overflow / step).sqrt()
-}
-
 fn next_wave_troops(rules: Rules, garrison: f32, carry: f32) -> (f32, f32) {
     let theoretical = theoretical_wave_troops(rules, garrison) + carry;
     let scheduled = theoretical.floor();

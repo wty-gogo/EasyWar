@@ -6,6 +6,7 @@
 
 use crate::common::*;
 use crate::neural_ai::{configured_controllers, NeuralModelResource};
+use crate::telemetry::{PendingPlayerCommands, TelemetryRecorder};
 use bevy::prelude::*;
 use easywar_logic::*;
 use std::path::{Path, PathBuf};
@@ -85,12 +86,25 @@ pub fn enter_playing(world: &mut World) {
     world.insert_resource(GameClock::default());
     world.insert_resource(Winner::default());
     world.insert_resource(IntentQueue::default());
+    world.insert_resource(PendingPlayerCommands::default());
     world.insert_resource(SeqCounter::default());
     world.insert_resource(SimAccum::default());
+    let input_mode = *world.resource::<InputMode>();
+    if let Some(mut recorder) = world.remove_resource::<TelemetryRecorder>() {
+        let status = recorder.start_session(world, input_mode);
+        world.insert_resource(recorder);
+        if let Some(status) = status {
+            world.resource_mut::<DebugHud>().last_event = status;
+        }
+    }
     // 棋盘渲染实体由 render::spawn_board_system 在下一帧生成（等资源就绪）
 }
 
 pub fn exit_playing(world: &mut World) {
+    if let Some(mut recorder) = world.remove_resource::<TelemetryRecorder>() {
+        recorder.close_session(world);
+        world.insert_resource(recorder);
+    }
     // 逻辑实体：格子（含虚空格）+ 小队 + 兵流
     let lookup = world.resource::<GridLookup>().clone();
     for e in lookup.cells {

@@ -110,7 +110,7 @@ fn submit_and_ai_candidate_order_are_measured_as_independent_factors() {
 }
 
 #[test]
-fn base_list_order_probe_locates_first_decision_or_state_divergence() {
+fn base_list_order_does_not_change_cost_ranked_ai_trace() {
     let reference =
         run_match(&config(MatchFactors::default(), 20.0, true)).expect("运行基准夹具失败");
     let reversed = run_match(&config(
@@ -122,16 +122,9 @@ fn base_list_order_probe_locates_first_decision_or_state_divergence() {
         true,
     ))
     .expect("运行反向 BaseList 夹具失败");
-    let divergence = first_divergence(&reference.trace, &reversed.trace)
-        .expect("BaseList 顺序变化应在可控夹具上产生可定位分歧");
-    assert!(divergence.tick > 0);
-    assert!(divergence.parts.iter().any(|part| {
-        matches!(
-            part,
-            SnapshotPart::Intents
-                | SnapshotPart::Streams
-                | SnapshotPart::Squads
-                | SnapshotPart::Cells
-        )
-    }));
+    assert_eq!(
+        first_divergence(&reference.trace, &reversed.trace),
+        None,
+        "按成本和坐标稳定排序后，BaseList 声明顺序不应再改变规则 AI 轨迹"
+    );
 }

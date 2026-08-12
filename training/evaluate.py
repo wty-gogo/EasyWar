@@ -9,6 +9,7 @@ import torch
 from evaluation import aggregate_results, evaluate_model, format_result, verify_replay
 from runtime import (
     build_model,
+    checkpoint_observation_channels,
     checkpoint_strategy_count,
     choose_device,
     load_model_weights,
@@ -29,6 +30,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=20)
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--threads", type=int, default=0)
+    parser.add_argument(
+        "--policy-temperature",
+        type=float,
+        default=0.0,
+        help="评测动作采样温度；0 使用确定性最高分动作",
+    )
     parser.add_argument("--seed", type=int, default=100_000)
     parser.add_argument("--device", default="auto")
     parser.add_argument(
@@ -47,6 +54,9 @@ def main() -> None:
     device = choose_device(args.device)
     checkpoint_path = resolve_artifact_path(args.checkpoint)
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=True)
+    tactical_actions = bool(
+        checkpoint.get("training_state", {}).get("tactical_actions", False)
+    )
     strategy_count = checkpoint_strategy_count(checkpoint)
     strategy_ids = args.strategy_ids or list(range(strategy_count))
     invalid_strategies = [
@@ -54,7 +64,11 @@ def main() -> None:
     ]
     if invalid_strategies:
         raise ValueError(f"策略编号超出 0..{strategy_count}：{invalid_strategies}")
-    model = build_model(device, strategy_count)
+    model = build_model(
+        device,
+        strategy_count,
+        checkpoint_observation_channels(checkpoint),
+    )
     load_model_weights(model, checkpoint)
     transform = None if args.seat_transform == "auto" else args.seat_transform
     results = [
@@ -70,6 +84,8 @@ def main() -> None:
             seat_transform=transform,
             capture_replays=bool(args.replays),
             strategy_id=strategy_id,
+            tactical_actions=tactical_actions,
+            policy_temperature=args.policy_temperature,
         )
         for index, map_name in enumerate(args.maps)
         for strategy_id in strategy_ids

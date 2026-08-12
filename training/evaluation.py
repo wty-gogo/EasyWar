@@ -15,7 +15,7 @@ from behavior import (
     summarize_behaviors,
 )
 from model import EasyWarActorCritic
-from runtime import map_transform, repository_root, to_tensors
+from runtime import map_transform, repository_root, to_model_tensors, to_tensors
 
 
 @dataclass(frozen=True)
@@ -158,9 +158,13 @@ def evaluate_model(
     seat_transform: str | None = None,
     capture_replays: bool = False,
     strategy_id: int = 0,
+    tactical_actions: bool = False,
+    policy_temperature: float = 0.0,
 ) -> EvaluationResult:
     if episodes <= 0 or num_envs <= 0:
         raise ValueError("评测局数和并行环境数必须大于 0")
+    if policy_temperature < 0.0:
+        raise ValueError("评测策略温度不能小于 0")
     root = repository_root()
     environment_count = min(num_envs, episodes)
     transform_name = seat_transform or map_transform(map_name)
@@ -172,8 +176,11 @@ def evaluate_model(
         opponent=opponent,
         map_transforms=[transform_name],
         alternate_seats=True,
+        tactical_actions=tactical_actions,
     )
-    current = to_tensors(environment.observe(), device)
+    current, previous_values = to_model_tensors(
+        environment.observe(), device, model.observation_channels
+    )
     strategy_ids = torch.full(
         (environment_count,), strategy_id, dtype=torch.long, device=device
     )
@@ -203,7 +210,8 @@ def evaluate_model(
                 current.bases,
                 current.masks,
                 strategy_ids,
-                deterministic=True,
+                deterministic=policy_temperature == 0.0,
+                temperature=policy_temperature or 1.0,
             )
         action_ids = actions.cpu().tolist()
         current_values = current.values.detach().cpu()
@@ -263,9 +271,17 @@ def evaluate_model(
                     strategy_id,
                 )
             batch = environment.reset_indices(terminal_indices, seeds)
+            reset_indices = terminal_indices
         else:
             batch = transition
-        current = to_tensors(batch, device)
+            reset_indices = []
+        current, previous_values = to_model_tensors(
+            batch,
+            device,
+            model.observation_channels,
+            previous_values,
+            reset_indices,
+        )
 
     model.train(was_training)
     return EvaluationResult(

@@ -5,6 +5,7 @@ use crate::board::Board;
 use crate::components::*;
 use crate::intents::{Intent, IntentQueue};
 use crate::plugin::SIM_DT;
+use crate::tactics::estimate_attack_board;
 use crate::world_ext::{load_squads, load_streams};
 use bevy_ecs::prelude::*;
 
@@ -166,6 +167,7 @@ fn decide(
     streams: &[(Entity, Stream)],
     factions: &[Faction],
 ) -> Option<Intent> {
+    let cost_safety = |threshold: f32| 1.0 + (threshold - 1.0).max(0.0) * 0.2;
     let me = c.faction;
     let my_bases: Vec<&crate::board::BaseInfo> = board
         .bases
@@ -189,21 +191,84 @@ fn decide(
         })
     };
 
-    // ---- 1. 守：据点被敌小队瞄准且驻军不足 → 从最富的己方据点增援 ----
+    // ---- 1. 守：据点被敌小队瞄准且驻军不足 → 优先从可直达的前线据点增援 ----
     for b in &my_bases {
         if threatened(b.cell) && garrison_of(b.cell) < 0.4 * board.base_garrison_cap(b) {
-            if let Some(rich) = my_bases.iter().filter(|r| r.cell != b.cell).max_by(|a, c| {
-                garrison_of(a.cell)
-                    .partial_cmp(&garrison_of(c.cell))
-                    .unwrap()
-            }) {
-                if garrison_of(rich.cell) > 10.0 {
-                    return Some(Intent::SetStream {
-                        faction: me,
-                        source: rich.cell,
-                        target: b.cell,
-                    });
-                }
+            let direct_source = my_bases
+                .iter()
+                .filter(|source| {
+                    source.cell != b.cell
+                        && stream_from(source.cell).is_none()
+                        && garrison_of(source.cell) > 10.0
+                })
+                .filter_map(|source| {
+                    let estimate =
+                        estimate_attack_board(board, squads, streams, me, source.cell, b.cell)?;
+                    estimate
+                        .intermediate_base
+                        .is_none()
+                        .then_some((*source, estimate.path.len()))
+                })
+                .min_by(|(left, left_distance), (right, right_distance)| {
+                    left_distance.cmp(right_distance).then_with(|| {
+                        garrison_of(right.cell)
+                            .partial_cmp(&garrison_of(left.cell))
+                            .unwrap()
+                    })
+                })
+                .map(|(source, _)| source);
+            if let Some(source) = direct_source {
+                return Some(Intent::SetStream {
+                    faction: me,
+                    source: source.cell,
+                    target: b.cell,
+                });
+            }
+            let staged_source = my_bases
+                .iter()
+                .filter(|source| {
+                    source.cell != b.cell
+                        && stream_from(source.cell).is_none()
+                        && garrison_of(source.cell) >= 30.0
+                })
+                .filter_map(|source| {
+                    let staging =
+                        estimate_attack_board(board, squads, streams, me, source.cell, b.cell)?
+                            .intermediate_base
+                            .filter(|&cell| board.owner[cell] == me)?;
+                    let staging_base = board
+                        .bases
+                        .iter()
+                        .find(|candidate| candidate.cell == staging)?;
+                    if garrison_of(staging) >= 0.8 * board.base_garrison_cap(staging_base) {
+                        return None;
+                    }
+                    let estimate =
+                        estimate_attack_board(board, squads, streams, me, source.cell, staging)?;
+                    estimate.intermediate_base.is_none().then_some((
+                        *source,
+                        staging,
+                        estimate.path.len(),
+                    ))
+                })
+                .min_by(
+                    |(left, left_target, left_distance), (right, right_target, right_distance)| {
+                        left_distance
+                            .cmp(right_distance)
+                            .then_with(|| left_target.cmp(right_target))
+                            .then_with(|| {
+                                garrison_of(right.cell)
+                                    .partial_cmp(&garrison_of(left.cell))
+                                    .unwrap()
+                            })
+                    },
+                );
+            if let Some((source, staging, _)) = staged_source {
+                return Some(Intent::SetStream {
+                    faction: me,
+                    source: source.cell,
+                    target: staging,
+                });
             }
         }
     }
@@ -220,8 +285,8 @@ fn decide(
         else {
             return false;
         };
-        !threatened(target.cell)
-            || garrison_of(target.cell) >= 0.4 * board.base_garrison_cap(target)
+        let target_ratio = if threatened(target.cell) { 0.4 } else { 0.8 };
+        garrison_of(target.cell) >= target_ratio * board.base_garrison_cap(target)
     }) {
         return Some(Intent::StopStream {
             faction: me,
@@ -238,37 +303,71 @@ fn decide(
         return None;
     }
 
-    // 对指定目标选择前线出发点：先避免途经己方据点被截留，再选择更短路径，最后比较驻军。
-    let source_for = |target: CellIdx, minimum_garrison: f32| {
-        let route_rank = |source: CellIdx| {
-            board
-                .find_path(source, target, me)
-                .map(|path| {
-                    let friendly_hubs = path
-                        .iter()
-                        .skip(1)
-                        .take(path.len().saturating_sub(2))
-                        .filter(|&&cell| {
-                            board.kind[cell] == CellKind::Base && board.owner[cell] == me
-                        })
-                        .count();
-                    (friendly_hubs, path.len())
-                })
-                .unwrap_or((usize::MAX, usize::MAX))
-        };
+    // 对指定目标选择能承担成本的前线据点；整段打不穿时只清理最近的非己方格。
+    let source_for = |target: CellIdx, minimum_garrison: f32, safety: f32| {
         my_bases
             .iter()
             // 已有兵流的据点不开第二条
             .filter(|b| stream_from(b.cell).is_none())
-            .filter(|b| garrison_of(b.cell) > minimum_garrison)
-            .min_by(|a, cc| {
-                route_rank(a.cell).cmp(&route_rank(cc.cell)).then_with(|| {
-                    garrison_of(cc.cell)
-                        .partial_cmp(&garrison_of(a.cell))
-                        .unwrap()
-                })
+            .filter_map(|base| {
+                let direct = estimate_attack_board(board, squads, streams, me, base.cell, target)?;
+                if let Some(staging_cell) = direct
+                    .intermediate_base
+                    .filter(|&cell| board.owner[cell] == me)
+                {
+                    let staging_base = board
+                        .bases
+                        .iter()
+                        .find(|candidate| candidate.cell == staging_cell)?;
+                    let staging_target = 0.8 * board.base_garrison_cap(staging_base);
+                    if garrison_of(staging_cell) >= staging_target {
+                        return None;
+                    }
+                    let estimate =
+                        estimate_attack_board(board, squads, streams, me, base.cell, staging_cell)?;
+                    let required = minimum_garrison.max(30.0);
+                    return (estimate.intermediate_base.is_none()
+                        && garrison_of(base.cell) >= required)
+                        .then_some((*base, staging_cell, estimate, required));
+                }
+                let reachable_target = direct.intermediate_base.unwrap_or(target);
+                let reachable = (reachable_target == target).then_some(direct).or_else(|| {
+                    estimate_attack_board(board, squads, streams, me, base.cell, reachable_target)
+                })?;
+                let full_required =
+                    (reachable.required_source_garrison * safety).max(minimum_garrison);
+                if reachable.intermediate_base.is_none()
+                    && full_required.is_finite()
+                    && garrison_of(base.cell) >= full_required
+                {
+                    return Some((*base, reachable_target, reachable, full_required));
+                }
+                let frontier = reachable
+                    .path
+                    .iter()
+                    .copied()
+                    .skip(1)
+                    .find(|&cell| board.owner[cell] != me)?;
+                let estimate =
+                    estimate_attack_board(board, squads, streams, me, base.cell, frontier)?;
+                let required = (estimate.required_source_garrison * safety).max(minimum_garrison);
+                (estimate.intermediate_base.is_none()
+                    && required.is_finite()
+                    && garrison_of(base.cell) >= required)
+                    .then_some((*base, frontier, estimate, required))
             })
-            .copied()
+            .min_by(|(a, at, ae, ar), (b, bt, be, br)| {
+                ar.partial_cmp(br)
+                    .unwrap()
+                    .then_with(|| ae.path.len().cmp(&be.path.len()))
+                    .then_with(|| at.cmp(bt))
+                    .then_with(|| {
+                        garrison_of(b.cell)
+                            .partial_cmp(&garrison_of(a.cell))
+                            .unwrap()
+                    })
+            })
+            .map(|(base, planned_target, _, _)| (base, planned_target))
     };
 
     // ---- 1.5 拦截（困难）：朝对方兵流路径中点派兵对冲 ----
@@ -279,11 +378,11 @@ fn decide(
         {
             let mid = ps.path[ps.path.len() / 2];
             if board.owner[mid] != me {
-                if let Some(src) = source_for(mid, 30.0) {
+                if let Some((src, target)) = source_for(mid, 30.0, 1.0) {
                     return Some(Intent::SetStream {
                         faction: me,
                         source: src.cell,
-                        target: mid,
+                        target,
                     });
                 }
             }
@@ -301,21 +400,34 @@ fn decide(
         if stream_from(b.cell).is_some() {
             continue; // 这个据点已经在干活
         }
-        let mut targets: Vec<CellIdx> = b
+        let targets: Vec<CellIdx> = b
             .linked
             .iter()
             .copied()
             .filter(|&t| board.owner[t] != me)
             .collect();
-        targets.sort_by(|&a, &cc| garrison_of(a).partial_cmp(&garrison_of(cc)).unwrap());
-        if let Some(&t) = targets.first() {
-            if garrison_of(b.cell) > garrison_of(t) * c.params.attack_threshold {
-                return Some(Intent::SetStream {
-                    faction: me,
-                    source: b.cell,
-                    target: t,
-                });
-            }
+        let target = targets
+            .iter()
+            .filter_map(|&candidate| {
+                estimate_attack_board(board, squads, streams, me, b.cell, candidate)
+                    .map(|estimate| (candidate, estimate))
+            })
+            .filter(|(_, estimate)| {
+                estimate.can_launch(garrison_of(b.cell), cost_safety(c.params.attack_threshold))
+            })
+            .min_by(|(_, left), (_, right)| {
+                left.required_source_garrison
+                    .partial_cmp(&right.required_source_garrison)
+                    .unwrap()
+                    .then_with(|| left.path.len().cmp(&right.path.len()))
+            })
+            .map(|(candidate, _)| candidate);
+        if let Some(t) = target {
+            return Some(Intent::SetStream {
+                faction: me,
+                source: b.cell,
+                target: t,
+            });
         }
     }
 
@@ -326,12 +438,13 @@ fn decide(
             if board.owner[b.cell] != NEUTRAL {
                 continue;
             }
-            let minimum = garrison_of(b.cell) * c.params.attack_threshold;
-            if let Some(src) = source_for(b.cell, minimum) {
+            if let Some((src, target)) =
+                source_for(b.cell, 0.0, cost_safety(c.params.attack_threshold))
+            {
                 return Some(Intent::SetStream {
                     faction: me,
                     source: src.cell,
-                    target: b.cell,
+                    target,
                 });
             }
         }
@@ -345,12 +458,13 @@ fn decide(
             }
             for &t in &eb.linked {
                 if board.owner[t] == eo {
-                    let minimum = garrison_of(t) * c.params.attack_threshold;
-                    if let Some(src) = source_for(t, minimum) {
+                    if let Some((src, target)) =
+                        source_for(t, 0.0, cost_safety(c.params.attack_threshold))
+                    {
                         return Some(Intent::SetStream {
                             faction: me,
                             source: src.cell,
-                            target: t,
+                            target,
                         });
                     }
                 }
@@ -383,7 +497,7 @@ fn decide(
                     .unwrap()
             });
         if let Some(tgt) = weakest_enemy_base {
-            let src = source_for(tgt.cell, 30.0)?;
+            let (src, target) = source_for(tgt.cell, 30.0, cost_safety(c.params.attack_threshold))?;
             let cap = board.base_garrison_cap(src);
             let saturated = garrison_of(src.cell) >= 0.95 * cap;
             let dominant = my_total > enemy_total * c.params.total_attack_ratio;
@@ -392,7 +506,7 @@ fn decide(
                 return Some(Intent::SetStream {
                     faction: me,
                     source: src.cell,
-                    target: tgt.cell,
+                    target,
                 });
             }
         }

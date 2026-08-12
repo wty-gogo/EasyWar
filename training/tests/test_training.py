@@ -3,11 +3,14 @@ from __future__ import annotations
 import tempfile
 import unittest
 from argparse import Namespace
+from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
 import easywar_rl
+from model import EasyWarActorCritic
 
 from behavior import (
     episode_behavior_from_dict,
@@ -26,10 +29,14 @@ from evaluation import (
     passes_validation_gate,
 )
 from runtime import (
+    HistoricalOpponentPool,
+    TEMPORAL_OBSERVATION_CHANNELS,
     build_model,
+    checkpoint_observation_channels,
     checkpoint_strategy_count,
     load_model_weights,
     repository_root,
+    to_model_tensors,
     training_map_names,
 )
 from train_ppo import (
@@ -37,6 +44,7 @@ from train_ppo import (
     categorical_kl,
     configure_strategy_adapter_training,
     environment_strategy_ids,
+    learning_rewards,
     load_checkpoint,
     run_validation,
     save_checkpoint,
@@ -46,6 +54,7 @@ from train_ppo import (
     validate_args,
     validate_resume_checkpoint,
 )
+from train_selfplay_league import promotion_decision
 
 
 class EvaluationResultTests(unittest.TestCase):
@@ -60,6 +69,7 @@ class EvaluationResultTests(unittest.TestCase):
         self.assertEqual(result.completion_rate, 0.5)
         self.assertEqual(result.completed_win_rate, 0.6)
         self.assertEqual(result.overall_win_rate, 0.3)
+
 
     def test_aggregate_keeps_all_terminal_categories(self) -> None:
         results = [
@@ -126,10 +136,112 @@ class EvaluationResultTests(unittest.TestCase):
         )
 
 
+class TemporalObservationTests(unittest.TestCase):
+    @staticmethod
+    def batch(value: float, count: int = 2) -> SimpleNamespace:
+        cells = easywar_rl.MAX_WIDTH * easywar_rl.MAX_HEIGHT
+        return SimpleNamespace(
+            observations=[
+                [value] * (easywar_rl.OBSERVATION_CHANNELS * cells)
+                for _ in range(count)
+            ],
+            action_masks=[[True] * easywar_rl.ACTION_COUNT for _ in range(count)],
+            base_cells=[[0] * easywar_rl.MAX_BASES for _ in range(count)],
+        )
+
+    def test_temporal_input_appends_delta_and_clears_reset_environments(self) -> None:
+        first, previous = to_model_tensors(
+            self.batch(1.0),
+            torch.device("cpu"),
+            TEMPORAL_OBSERVATION_CHANNELS,
+        )
+        second, _ = to_model_tensors(
+            self.batch(3.0),
+            torch.device("cpu"),
+            TEMPORAL_OBSERVATION_CHANNELS,
+            previous,
+            [1],
+        )
+        self.assertTrue(
+            torch.equal(
+                first.values[:, easywar_rl.OBSERVATION_CHANNELS :],
+                torch.zeros_like(first.values[:, easywar_rl.OBSERVATION_CHANNELS :]),
+            )
+        )
+        self.assertTrue(
+            torch.all(second.values[0, easywar_rl.OBSERVATION_CHANNELS :] == 2.0)
+        )
+        self.assertTrue(
+            torch.all(second.values[1, easywar_rl.OBSERVATION_CHANNELS :] == 0.0)
+        )
+
+    def test_v5_weights_expand_without_changing_zero_delta_action(self) -> None:
+        device = torch.device("cpu")
+        legacy = EasyWarActorCritic(17, 13, 17, 16).to(device)
+        checkpoint = {"model": legacy.state_dict()}
+        temporal = build_model(
+            device, observation_channels=TEMPORAL_OBSERVATION_CHANNELS
+        )
+        load_model_weights(temporal, checkpoint)
+        observations = torch.randn((2, 17, 13, 17))
+        current_observations = torch.cat(
+            (
+                observations,
+                torch.zeros(
+                    (2, easywar_rl.OBSERVATION_CHANNELS - 17, 13, 17)
+                ),
+            ),
+            dim=1,
+        )
+        temporal_observations = torch.cat(
+            (current_observations, torch.zeros_like(current_observations)), dim=1
+        )
+        bases = torch.zeros((2, 16), dtype=torch.long)
+        masks = torch.zeros((2, easywar_rl.ACTION_COUNT), dtype=torch.bool)
+        masks[:, :100] = True
+        legacy_actions, _, _ = legacy.act(
+            observations, bases, masks, deterministic=True
+        )
+        temporal_actions, _, _ = temporal.act(
+            temporal_observations, bases, masks, deterministic=True
+        )
+        self.assertTrue(torch.equal(legacy_actions, temporal_actions))
+        self.assertEqual(checkpoint_observation_channels(checkpoint), 17)
+
+    def test_lower_rollout_temperature_changes_finite_policy_likelihood(self) -> None:
+        model = build_model(torch.device("cpu"))
+        observations = torch.randn(
+            (2, easywar_rl.OBSERVATION_CHANNELS, 13, 17)
+        )
+        bases = torch.zeros((2, 16), dtype=torch.long)
+        masks = torch.zeros((2, easywar_rl.ACTION_COUNT), dtype=torch.bool)
+        masks[:, :100] = True
+        actions, _, _ = model.act(
+            observations, bases, masks, deterministic=True
+        )
+        normal = model.evaluate_actions(
+            observations, bases, masks, actions, temperature=1.0
+        )[0]
+        focused = model.evaluate_actions(
+            observations, bases, masks, actions, temperature=0.2
+        )[0]
+        (-focused.mean()).backward()
+        self.assertTrue(torch.isfinite(focused).all())
+        self.assertTrue(
+            all(
+                parameter.grad is None or torch.isfinite(parameter.grad).all()
+                for parameter in model.parameters()
+            )
+        )
+        self.assertTrue(torch.all(focused > normal))
+        with self.assertRaisesRegex(ValueError, "采样温度"):
+            model.act(observations, bases, masks, temperature=0.0)
+
+
 class BehaviorMetricsTests(unittest.TestCase):
     @staticmethod
     def observation() -> torch.Tensor:
-        observation = torch.zeros((17, 13, 17))
+        observation = torch.zeros((easywar_rl.OBSERVATION_CHANNELS, 13, 17))
         observation[0, 0, :4] = 1.0
         observation[2, 0, 0] = 1.0
         observation[3, 0, 0] = 1.0
@@ -299,6 +411,41 @@ class BehaviorMetricsTests(unittest.TestCase):
 
 
 class TrainingBoundaryTests(unittest.TestCase):
+    def test_selfplay_candidate_cannot_replace_champion_after_rule_regression(self) -> None:
+        candidate = EvaluationResult(
+            "fixture.toml", "hard", 8, 1, {"Won": 3, "Lost": 5}
+        )
+        champion = EvaluationResult(
+            "fixture.toml", "hard", 8, 1, {"Won": 6, "Lost": 2}
+        )
+        decision = promotion_decision(
+            Counter({"Won": 40, "Lost": 20, "CycleDetected": 4}),
+            (candidate,),
+            (champion,),
+            0.52,
+            0.75,
+            0.125,
+        )
+        self.assertFalse(decision.promoted)
+        self.assertTrue(any("hard 胜率" in reason for reason in decision.reasons))
+
+    def test_terminal_only_reward_discards_ongoing_shaping(self) -> None:
+        rewards = [0.2, 1.0, -1.0, -1.1]
+        names = ["Ongoing", "Won", "Lost", "CycleDetected"]
+        self.assertEqual(
+            learning_rewards(rewards, names, terminal_only=True),
+            [0.0, 1.0, -1.0, -1.1],
+        )
+        self.assertIs(
+            learning_rewards(rewards, names, terminal_only=False), rewards
+        )
+
+    def test_historical_pool_rejects_negative_sampling_temperature(self) -> None:
+        with self.assertRaisesRegex(ValueError, "历史对手采样温度"):
+            HistoricalOpponentPool(
+                [Path("missing.pt")], torch.device("cpu"), 1, temperature=-0.1
+            )
+
     def test_h_and_held_out_maps_are_never_part_of_training_phase(self) -> None:
         self.assertEqual(
             training_map_names("main"),
@@ -473,7 +620,7 @@ class TrainingBoundaryTests(unittest.TestCase):
         self.assertTrue(any("对手先提交" in label for label in labels))
 
     def test_action_target_distribution_uses_visible_target_ownership(self) -> None:
-        observations = torch.zeros((3, 17, 13, 17))
+        observations = torch.zeros((3, easywar_rl.OBSERVATION_CHANNELS, 13, 17))
         cells = 13 * 17
         targets = [5, 6, 7]
         observations[0, 4].flatten()[targets[0]] = 1.0
@@ -522,7 +669,7 @@ class TrainingBoundaryTests(unittest.TestCase):
             }),
             4,
         )
-        observations = torch.zeros((4, 17, 13, 17))
+        observations = torch.zeros((4, easywar_rl.OBSERVATION_CHANNELS, 13, 17))
         bases = torch.zeros((4, 16), dtype=torch.long)
         masks = torch.ones((4, 3553), dtype=torch.bool)
         actions, _, _ = expanded.act(
@@ -536,7 +683,7 @@ class TrainingBoundaryTests(unittest.TestCase):
 
     def test_strategy_js_detects_controlled_policy_difference(self) -> None:
         model = build_model(torch.device("cpu"), strategy_count=2)
-        observations = torch.randn((2, 17, 13, 17))
+        observations = torch.randn((2, easywar_rl.OBSERVATION_CHANNELS, 13, 17))
         bases = torch.zeros((2, 16), dtype=torch.long)
         masks = torch.zeros((2, 3553), dtype=torch.bool)
         masks[:, :100] = True
@@ -559,7 +706,7 @@ class TrainingBoundaryTests(unittest.TestCase):
         )
 
     def test_strategy_specialization_rewards_interpretable_target_preferences(self) -> None:
-        observations = torch.zeros((3, 17, 13, 17))
+        observations = torch.zeros((3, easywar_rl.OBSERVATION_CHANNELS, 13, 17))
         preferred_target = 10
         other_target = 11
         observations[0, 4].flatten()[preferred_target] = 1.0

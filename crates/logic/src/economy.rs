@@ -26,12 +26,12 @@ pub fn economy(world: &mut World) {
             }
         }
     }
-    // 回防：中立格子（含中立要塞）+ 任何阵营的地块（非据点）
+    // 回防：普通地块按规则恢复；中立据点按自身基础产能恢复，但不超过初始驻军。
     for i in 0..board.kind.len() {
         let regens = board.owner[i] == NEUTRAL || board.kind[i] != CellKind::Base;
         if regens && board.kind[i].enterable() && board.garrison[i] < board.garrison_max[i] {
-            board.garrison[i] =
-                (board.garrison[i] + board.rules.regen_per_sec * SIM_DT).min(board.garrison_max[i]);
+            let recovery = board.cell_recovery_per_sec(i);
+            board.garrison[i] = (board.garrison[i] + recovery * SIM_DT).min(board.garrison_max[i]);
             board.touch(i);
         }
     }

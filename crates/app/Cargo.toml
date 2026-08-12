@@ -21,3 +21,5 @@ bevy = { version = "0.19", default-features = false, features = [
 ] }
 # 让 icu_provider（parley 断行）的告警走 log facade，默认是 eprintln 直出无法过滤
 icu_provider = { version = "2", features = ["logging"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

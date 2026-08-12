@@ -11,8 +11,8 @@ from torch import Tensor
 from runtime import resolve_artifact_path
 
 
-MAGIC = b"EWNNv1\0\0"
-MODEL_SHAPE = (17, 13, 17, 16, 64)
+MAGIC = b"EWNNv2\0\0"
+MODEL_SPATIAL_SHAPE = (13, 17, 16, 64)
 ACTOR_TENSORS = (
     "encoder.0.weight",
     "encoder.0.bias",
@@ -22,6 +22,10 @@ ACTOR_TENSORS = (
     "source_projection.bias",
     "target_projection.weight",
     "target_projection.bias",
+    "source_context_projection.weight",
+    "source_context_projection.bias",
+    "target_context_projection.weight",
+    "target_context_projection.bias",
     "stop_head.weight",
     "stop_head.bias",
     "no_op_head.weight",
@@ -30,7 +34,7 @@ ACTOR_TENSORS = (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="导出游戏内神经模型 V5 权重")
+    parser = argparse.ArgumentParser(description="导出游戏内神经模型权重")
     parser.add_argument("checkpoint", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--strategy-id", type=int, default=0)
@@ -53,8 +57,9 @@ def export_actor(
     if not 0 <= strategy_id < strategies.shape[0]:
         raise ValueError(f"策略编号必须位于 0..{strategies.shape[0] - 1}")
     tensors = [state[name] for name in ACTOR_TENSORS] + [strategies[strategy_id]]
+    input_channels = int(state["encoder.0.weight"].shape[1])
     payload = bytearray(MAGIC)
-    payload.extend(struct.pack("<5I", *MODEL_SHAPE))
+    payload.extend(struct.pack("<5I", input_channels, *MODEL_SPATIAL_SHAPE))
     for tensor in tensors:
         values = _tensor_bytes(tensor)
         payload.extend(struct.pack("<I", len(values) // 4))
@@ -74,7 +79,7 @@ def main() -> None:
         else resolve_artifact_path(args.output)
     )
     digest = export_actor(checkpoint, output, args.strategy_id)
-    print(f"神经模型 V5 权重已导出：{output}")
+    print(f"游戏内神经模型权重已导出：{output}")
     print(f"策略：{args.strategy_id} | SHA-256：{digest}")
 
 

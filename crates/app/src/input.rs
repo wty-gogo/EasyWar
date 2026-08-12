@@ -2,6 +2,7 @@
 
 use crate::common::*;
 use crate::neural_ai::{configured_controllers, NeuralModelResource};
+use crate::telemetry::PendingPlayerCommands;
 use bevy::prelude::*;
 use easywar_logic::*;
 use std::collections::HashSet;
@@ -91,15 +92,24 @@ fn desktop_click_plan(
 
 fn push_stream_intents(
     intents: &mut IntentQueue,
+    telemetry: &mut PendingPlayerCommands,
     selected: &HashSet<CellIdx>,
     target: CellIdx,
 ) -> usize {
     let commands = set_stream_intents(selected, target);
     let count = commands.len();
-    for command in commands {
-        intents.push(command);
-    }
+    intents.0.extend(commands.iter().copied());
+    telemetry.extend(commands);
     count
+}
+
+fn push_player_intent(
+    intents: &mut IntentQueue,
+    telemetry: &mut PendingPlayerCommands,
+    intent: Intent,
+) {
+    intents.push(intent);
+    telemetry.push(intent);
 }
 
 fn toggle_selection(selected: &mut HashSet<CellIdx>, cell: CellIdx) {
@@ -162,6 +172,7 @@ fn draw_selection_box(from: Option<Vec2>, cursor: Option<Vec2>, gizmos: &mut Giz
 #[allow(clippy::too_many_arguments)]
 pub fn handle_desktop_input(
     mut intents: ResMut<IntentQueue>,
+    mut telemetry: ResMut<PendingPlayerCommands>,
     mut pointer: ResMut<DragState>,
     mut hud: ResMut<DebugHud>,
     lookup: Res<GridLookup>,
@@ -250,17 +261,20 @@ pub fn handle_desktop_input(
         }
         DesktopClickPlan::Send(commands) => {
             let count = commands.len();
-            for command in commands {
-                intents.push(command);
-            }
+            intents.0.extend(commands.iter().copied());
+            telemetry.extend(commands);
             pointer.selected.clear();
             hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
         }
         DesktopClickPlan::Stop(source) => {
-            intents.push(Intent::StopStream {
-                faction: PLAYER,
-                source,
-            });
+            push_player_intent(
+                &mut intents,
+                &mut telemetry,
+                Intent::StopStream {
+                    faction: PLAYER,
+                    source,
+                },
+            );
             pointer.selected.clear();
             hud.last_event = format!("停止 {:?} 的兵流", lookup.xy(source));
         }
@@ -278,6 +292,7 @@ pub fn handle_desktop_input(
 #[allow(clippy::too_many_arguments)]
 pub fn handle_touch_input(
     mut intents: ResMut<IntentQueue>,
+    mut telemetry: ResMut<PendingPlayerCommands>,
     mut drag: ResMut<DragState>,
     mut hud: ResMut<DebugHud>,
     lookup: Res<GridLookup>,
@@ -343,14 +358,19 @@ pub fn handle_touch_input(
     if let Some(source) = drag.dragging.take() {
         match cursor.and_then(|world| world_to_cell(world, &lookup, &kinds)) {
             Some(target) if target != source => {
-                let count = push_stream_intents(&mut intents, &drag.selected, target);
+                let count =
+                    push_stream_intents(&mut intents, &mut telemetry, &drag.selected, target);
                 hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
             }
             Some(_) if active_stream_from(&streams, source) => {
-                intents.push(Intent::StopStream {
-                    faction: PLAYER,
-                    source,
-                });
+                push_player_intent(
+                    &mut intents,
+                    &mut telemetry,
+                    Intent::StopStream {
+                        faction: PLAYER,
+                        source,
+                    },
+                );
                 hud.last_event = format!("停止 {:?} 的兵流", lookup.xy(source));
             }
             Some(_) => {
@@ -379,14 +399,14 @@ pub fn handle_touch_input(
         );
         hud.last_event = format!("框选 {} 个据点", drag.selected.len());
     } else if let Some(target) = world_to_cell(release, &lookup, &kinds) {
-        let count = push_stream_intents(&mut intents, &drag.selected, target);
+        let count = push_stream_intents(&mut intents, &mut telemetry, &drag.selected, target);
         hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
     } else {
         drag.selected.clear();
     }
 }
 
-/// 1/2/3/4 实时切换 AI：规则参数与神经模型都只提交玩家级合法意图。
+/// 1～9/0 实时切换 AI：规则参数与神经模型都只提交玩家级合法意图。
 pub fn switch_difficulty(
     keyboard: Res<ButtonInput<KeyCode>>,
     factions: Res<Factions>,
@@ -404,6 +424,18 @@ pub fn switch_difficulty(
         2
     } else if keyboard.just_pressed(KeyCode::Digit4) {
         3
+    } else if keyboard.just_pressed(KeyCode::Digit5) {
+        4
+    } else if keyboard.just_pressed(KeyCode::Digit6) {
+        5
+    } else if keyboard.just_pressed(KeyCode::Digit7) {
+        6
+    } else if keyboard.just_pressed(KeyCode::Digit8) {
+        7
+    } else if keyboard.just_pressed(KeyCode::Digit9) {
+        8
+    } else if keyboard.just_pressed(KeyCode::Digit0) {
+        9
     } else {
         return;
     };

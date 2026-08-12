@@ -193,6 +193,17 @@ fn production_scales_with_linked_tiles() {
 }
 
 #[test]
+fn neutral_base_recovers_at_its_base_production_without_exceeding_initial_garrison() {
+    let mut app = build();
+    let fort = base_cell(&mut app, "physics");
+    set_garrison(&mut app, fort, 30.0);
+    tick_secs(&mut app, 1.0);
+    assert!((garrison(&mut app, fort) - 32.5).abs() < 0.05);
+    tick_secs(&mut app, 10.0);
+    assert_eq!(garrison(&mut app, fort), 40.0, "中立据点仍封顶初始驻军");
+}
+
+#[test]
 fn shortest_path_exists_and_is_short() {
     let mut app = build();
     let pb = base_cell(&mut app, "chinese");
@@ -461,8 +472,9 @@ fn ai_launches_total_attack_when_dominant() {
             AiParams::normal(),
         )]));
 
-    // 30 秒内 AI 应建立目标为玩家格子的兵流
-    let mut attacked_player = false;
+    let player = base_cell(&mut app, "chinese");
+    // 30 秒内 AI 应沿玩家方向逐格推进，不再要求一条兵流硬穿整条路线。
+    let mut advanced_toward_player = false;
     for _ in 0..(30.0 / SIM_DT) as usize {
         tick(&mut app, 1);
         let targets: Vec<CellIdx> = {
@@ -472,12 +484,14 @@ fn ai_launches_total_attack_when_dominant() {
                 .map(|s| s.target)
                 .collect()
         };
-        if targets.iter().any(|&t| owner(&mut app, t) == 1) {
-            attacked_player = true;
+        if targets.iter().any(|&target| {
+            owner(&mut app, target) != 2 && find_path(app.world_mut(), target, player, 2).is_some()
+        }) {
+            advanced_toward_player = true;
             break;
         }
     }
-    assert!(attacked_player, "优势 AI 应对玩家发起进攻");
+    assert!(advanced_toward_player, "优势 AI 应沿玩家方向建立前沿兵流");
 }
 
 #[test]
@@ -532,9 +546,18 @@ fn ai_uses_forward_base_when_rear_route_would_be_intercepted() {
             AiParams::normal(),
         )]));
 
+    let expected_frontier = find_path(app.world_mut(), geography, music, 2)
+        .expect("地理到音乐应存在路径")
+        .into_iter()
+        .skip(1)
+        .find(|&cell| owner(&mut app, cell) != 2)
+        .expect("路径上应存在待清理前沿");
     tick_secs(&mut app, 3.0);
     let stream = stream_from(app.world_mut(), 2, geography).expect("AI 应从地理前线据点出兵");
-    assert_eq!(stream.target, music);
+    assert_eq!(
+        stream.target, expected_frontier,
+        "AI 应先清理最近前沿而非硬冲要塞"
+    );
 }
 
 #[test]
