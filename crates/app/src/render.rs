@@ -14,46 +14,17 @@ type CellQuery<'w, 's> = Query<
         &'static Owner,
         &'static Garrison,
         &'static LogicLabel,
-        Option<&'static Base>,
     ),
 >;
 
-/// 据点驻军上限（渲染侧重算：规则 + 已占领关联地块数）
-fn base_cap(
-    rules: &Rules,
-    cells: &CellQuery,
-    lookup: &GridLookup,
-    base: &Base,
-    owner: FactionId,
-) -> f32 {
-    let owned = base
-        .linked
-        .iter()
-        .filter(|&&t| {
-            cells
-                .get(lookup.entity(t))
-                .map(|(_, o, _, _, _)| o.0 == owner)
-                .unwrap_or(false)
-        })
-        .count();
-    rules.garrison_cap_base + rules.garrison_cap_per_tile * owned as f32
+fn format_cell_text(label: Option<&str>, garrison: f32) -> String {
+    let num = fmt_num(garrison);
+    label.map_or(num.clone(), |label| format!("{label}\n{num}"))
 }
 
-fn cell_text(rules: &Rules, cells: &CellQuery, lookup: &GridLookup, e: Entity) -> String {
-    let (kind, owner, garrison, label_text, base) = cells.get(e).unwrap();
-    let num = if *kind == CellKind::Base {
-        let cap = match (base, owner.0) {
-            (Some(b), o) if o != NEUTRAL => base_cap(rules, cells, lookup, b, o),
-            _ => garrison.max,
-        };
-        format!("{}/{}", fmt_num(garrison.cur), fmt_num(cap))
-    } else {
-        fmt_num(garrison.cur)
-    };
-    match &label_text.0 {
-        Some(l) => format!("{}\n{}", l, num),
-        None => num,
-    }
+fn cell_text(cells: &CellQuery, e: Entity) -> String {
+    let (_, _, garrison, label_text) = cells.get(e).unwrap();
+    format_cell_text(label_text.0.as_deref(), garrison.cur)
 }
 
 fn border_color(factions: &Factions, tint: &RegionTint, owner: FactionId, idx: CellIdx) -> Color {
@@ -68,24 +39,20 @@ fn border_color(factions: &Factions, tint: &RegionTint, owner: FactionId, idx: C
 }
 
 fn fill_color(factions: &Factions, cells: &CellQuery, e: Entity) -> Color {
-    let (kind, owner, _, _, _) = cells.get(e).unwrap();
-    if owner.0 != NEUTRAL {
-        let c = faction_color(factions, owner.0);
-        if *kind == CellKind::Base {
-            return Color::srgba(c[0], c[1], c[2], 1.0);
-        }
-        return Color::srgba(
-            c[0] * 0.25 + 0.93 * 0.75,
-            c[1] * 0.25 + 0.93 * 0.75,
-            c[2] * 0.25 + 0.93 * 0.75,
-            1.0,
-        );
+    let (_, owner, _, _) = cells.get(e).unwrap();
+    fill_color_for_owner(factions, owner.0)
+}
+
+fn fill_color_for_owner(factions: &Factions, owner: FactionId) -> Color {
+    if owner != NEUTRAL {
+        let c = faction_color(factions, owner);
+        return Color::srgba(c[0], c[1], c[2], 1.0);
     }
     Color::srgb(0.82, 0.83, 0.85)
 }
 
-fn text_color(kind: &CellKind, owner: FactionId) -> Color {
-    if *kind == CellKind::Base && owner != NEUTRAL {
+fn text_color(owner: FactionId) -> Color {
+    if owner != NEUTRAL {
         Color::WHITE
     } else {
         Color::srgb(0.25, 0.25, 0.28)
@@ -97,7 +64,6 @@ pub fn spawn_board_system(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     lookup: Option<Res<GridLookup>>,
-    rules: Option<Res<Rules>>,
     factions: Option<Res<Factions>>,
     tint: Option<Res<RegionTint>>,
     cells: CellQuery,
@@ -106,8 +72,7 @@ pub fn spawn_board_system(
     if spawned.is_some() {
         return;
     }
-    let (Some(lookup), Some(rules), Some(factions), Some(tint)) = (lookup, rules, factions, tint)
-    else {
+    let (Some(lookup), Some(factions), Some(tint)) = (lookup, factions, tint) else {
         return;
     };
     commands.insert_resource(BoardSpawned);
@@ -116,7 +81,7 @@ pub fn spawn_board_system(
     let origin = grid_origin(&lookup);
 
     for (i, &e) in lookup.cells.iter().enumerate() {
-        let Ok((kind, owner, _, _, _)) = cells.get(e) else {
+        let Ok((kind, owner, _, _)) = cells.get(e) else {
             continue;
         };
         if !kind.enterable() {
@@ -145,13 +110,13 @@ pub fn spawn_board_system(
         ));
         let is_base = *kind == CellKind::Base;
         commands.spawn((
-            Text2d::new(cell_text(&rules, &cells, &lookup, e)),
+            Text2d::new(cell_text(&cells, e)),
             TextFont {
                 font: FontSource::Handle(if is_base { bold.clone() } else { font.clone() }),
                 font_size: (if is_base { 14.0 } else { 11.0 }).into(),
                 ..default()
             },
-            TextColor(text_color(kind, owner.0)),
+            TextColor(text_color(owner.0)),
             Transform::from_xyz(pos.x, pos.y, 1.0),
             BoardEntity,
             CellLabel(e, String::new()),
@@ -172,7 +137,7 @@ pub fn spawn_board_system(
     commands.spawn((
         Text2d::new(""),
         TextFont {
-            font: FontSource::Handle(font),
+            font: FontSource::Handle(font.clone()),
             font_size: 12.0.into(),
             ..default()
         },
@@ -181,36 +146,55 @@ pub fn spawn_board_system(
         BoardEntity,
         HudText,
     ));
+    commands.spawn((
+        Sprite {
+            color: Color::srgba(1.0, 1.0, 1.0, 0.82),
+            custom_size: Some(Vec2::new(650.0, 42.0)),
+            ..default()
+        },
+        Transform::from_xyz(0.0, -350.0, 0.5),
+        BoardEntity,
+    ));
+    commands.spawn((
+        Text2d::new("点击任意据点查看产兵速度与驻军上限"),
+        TextFont {
+            font: FontSource::Handle(font),
+            font_size: 15.0.into(),
+            ..default()
+        },
+        TextColor(background_text_color()),
+        Transform::from_xyz(0.0, -350.0, 1.0),
+        BoardEntity,
+        BaseInfoText,
+    ));
 }
 
 pub fn sync_cells(
     factions: Res<Factions>,
     tint: Res<RegionTint>,
-    rules: Res<Rules>,
-    lookup: Res<GridLookup>,
     cells: CellQuery,
     mut borders: Query<(&CellBorder, &mut Sprite), Without<CellFill>>,
     mut fills: Query<(&CellFill, &mut Sprite), Without<CellBorder>>,
     mut labels: Query<(&mut CellLabel, &mut Text2d, &mut TextColor)>,
 ) {
     for (cb, mut sprite) in borders.iter_mut() {
-        if let Ok((_, owner, _, _, _)) = cells.get(cb.0) {
+        if let Ok((_, owner, _, _)) = cells.get(cb.0) {
             sprite.color = border_color(&factions, &tint, owner.0, cb.1);
         }
     }
     for (cf, mut sprite) in fills.iter_mut() {
-        if let Ok((_, _, _, _, _)) = cells.get(cf.0) {
+        if cells.get(cf.0).is_ok() {
             sprite.color = fill_color(&factions, &cells, cf.0);
         }
     }
     for (mut label, mut text, mut color) in labels.iter_mut() {
-        let s = cell_text(&rules, &cells, &lookup, label.0);
+        let s = cell_text(&cells, label.0);
         if s != label.1 {
             text.0 = s.clone();
             label.1 = s;
         }
-        if let Ok((kind, owner, _, _, _)) = cells.get(label.0) {
-            *color = TextColor(text_color(kind, owner.0));
+        if let Ok((_, owner, _, _)) = cells.get(label.0) {
+            *color = TextColor(text_color(owner.0));
         }
     }
 }
@@ -299,5 +283,26 @@ mod tests {
             border_color(&factions, &tint, PLAYER, 7),
             Color::srgba(0.72, 0.26, 0.58, 1.0)
         );
+    }
+
+    #[test]
+    fn occupied_cell_uses_the_full_faction_color() {
+        let color = [0.23, 0.51, 0.96, 1.0];
+        let factions = Factions(vec![Faction {
+            id: PLAYER,
+            name: "玩家".into(),
+            color,
+            is_player: true,
+        }]);
+
+        assert_eq!(
+            fill_color_for_owner(&factions, PLAYER),
+            Color::srgba(color[0], color[1], color[2], 1.0)
+        );
+    }
+
+    #[test]
+    fn base_cell_text_only_contains_current_garrison() {
+        assert_eq!(format_cell_text(Some("生物"), 23.8), "生物\n23");
     }
 }

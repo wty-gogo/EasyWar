@@ -186,7 +186,10 @@ pub struct RegionTint(pub HashMap<CellIdx, [f32; 4]>);
 #[derive(Resource, Default)]
 pub struct DragState {
     pub dragging: Option<CellIdx>,
+    /// 可下达出兵命令的己方据点集合。
     pub selected: HashSet<CellIdx>,
+    /// 当前详情面板查看的据点，不限制阵营。
+    pub inspected: Option<CellIdx>,
     pub press_pos: Option<Vec2>,
 }
 
@@ -254,6 +257,8 @@ pub struct CellLabel(pub Entity, pub String);
 pub struct SquadDot;
 #[derive(Component)]
 pub struct HudText;
+#[derive(Component)]
+pub struct BaseInfoText;
 
 // ---------- 工具函数 ----------
 

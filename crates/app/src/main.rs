@@ -127,7 +127,8 @@ fn main() {
             render::sync_cells,
             render::sync_squads,
             overlay::draw_overlays,
-            hud::update_hud,
+            hud::update_status_hud,
+            hud::update_base_info,
         )
             .run_if(in_state(AppState::Playing)),
     )

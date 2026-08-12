@@ -4,8 +4,9 @@ use crate::common::*;
 use bevy::prelude::*;
 use easywar_logic::*;
 
-const SELECTED_MARKER_SIZE: f32 = CELL + 16.0;
-const SELECTED_MARKER_WIDTH: f32 = 8.0;
+const SELECTED_MARKER_HALF: f32 = CELL / 2.0 + 3.0;
+const SELECTED_MARKER_LENGTH: f32 = 9.0;
+const SELECTED_MARKER_WIDTH: f32 = 4.0;
 
 #[derive(Default, Reflect, GizmoConfigGroup)]
 pub(crate) struct SelectedMarkerGizmos;
@@ -16,11 +17,20 @@ pub fn configure_gizmos(mut configs: ResMut<GizmoConfigStore>) {
 }
 
 fn draw_selected_base(gizmos: &mut Gizmos<SelectedMarkerGizmos>, position: Vec2) {
-    gizmos.rect_2d(
-        Isometry2d::from_translation(position),
-        Vec2::splat(SELECTED_MARKER_SIZE),
-        Color::srgb(1.0, 0.48, 0.08),
-    );
+    let color = Color::srgb(1.0, 0.42, 0.05);
+    for (x, y) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+        let corner = position + Vec2::new(x, y) * SELECTED_MARKER_HALF;
+        gizmos.line_2d(
+            corner,
+            corner - Vec2::new(x * SELECTED_MARKER_LENGTH, 0.0),
+            color,
+        );
+        gizmos.line_2d(
+            corner,
+            corner - Vec2::new(0.0, y * SELECTED_MARKER_LENGTH),
+            color,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -28,9 +38,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selected_border_is_wider_than_the_cell_border() {
-        assert!(SELECTED_MARKER_SIZE > CELL);
-        assert!(SELECTED_MARKER_WIDTH > BORDER);
+    fn selected_brackets_stay_close_to_the_cell() {
+        assert!(SELECTED_MARKER_HALF < CELL / 2.0 + STEP - CELL);
+        assert!(SELECTED_MARKER_WIDTH <= BORDER);
     }
 }
 
@@ -56,9 +66,16 @@ pub fn draw_overlays(
             gizmos.line_2d(a, b, color);
         }
     }
-    // 选中据点只使用一圈高对比宽边框。
+    // 出兵源和正在查看详情的据点使用紧贴格子的四角标记。
     for &src in &drag.selected {
         let p = cell_pos(&lookup, origin, src);
+        draw_selected_base(&mut selected_markers, p);
+    }
+    if let Some(inspected) = drag
+        .inspected
+        .filter(|inspected| !drag.selected.contains(inspected))
+    {
+        let p = cell_pos(&lookup, origin, inspected);
         draw_selected_base(&mut selected_markers, p);
     }
 }

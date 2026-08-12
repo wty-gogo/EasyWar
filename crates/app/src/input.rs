@@ -16,6 +16,7 @@ enum DesktopClickPlan {
     Send(Vec<Intent>),
     Stop(CellIdx),
     Clear,
+    Inspect(CellIdx),
     NeedSource,
 }
 
@@ -66,6 +67,7 @@ fn set_stream_intents(selected: &HashSet<CellIdx>, target: CellIdx) -> Vec<Inten
 fn desktop_click_plan(
     selected: &HashSet<CellIdx>,
     target: CellIdx,
+    is_base: bool,
     own_base: bool,
     shift: bool,
     active_stream: bool,
@@ -74,10 +76,10 @@ fn desktop_click_plan(
         return DesktopClickPlan::Toggle(target);
     }
     if selected.is_empty() {
-        return if own_base {
-            DesktopClickPlan::Select(target)
-        } else {
-            DesktopClickPlan::NeedSource
+        return match (is_base, own_base) {
+            (_, true) => DesktopClickPlan::Select(target),
+            (true, false) => DesktopClickPlan::Inspect(target),
+            (false, false) => DesktopClickPlan::NeedSource,
         };
     }
     if selected.len() == 1 && selected.contains(&target) {
@@ -195,6 +197,7 @@ pub fn handle_desktop_input(
 
     if keyboard.just_pressed(KeyCode::Escape) || buttons.just_pressed(MouseButton::Right) {
         pointer.selected.clear();
+        pointer.inspected = None;
         pointer.press_pos = None;
         hud.last_event = "已取消选择".into();
     }
@@ -212,6 +215,7 @@ pub fn handle_desktop_input(
     };
     let Some(release) = cursor else {
         pointer.selected.clear();
+        pointer.inspected = None;
         hud.last_event = "释放在窗口外，已取消选择".into();
         return;
     };
@@ -227,12 +231,14 @@ pub fn handle_desktop_input(
             &owners,
         );
         hud.last_event = format!("框选 {} 个据点", pointer.selected.len());
+        pointer.inspected = pointer.selected.iter().min().copied();
         return;
     }
 
     let Some(target) = world_to_cell(release, &lookup, &kinds) else {
         if !shift {
             pointer.selected.clear();
+            pointer.inspected = None;
         }
         hud.last_event = "点击地图外，已取消选择".into();
         return;
@@ -240,11 +246,15 @@ pub fn handle_desktop_input(
     let entity = lookup.entity(target);
     let kind = *kinds.get(entity).expect("可进入格缺少 CellKind");
     let owner = owners.get(entity).expect("可进入格缺少 Owner").0;
+    if kind == CellKind::Base {
+        pointer.inspected = Some(target);
+    }
     let own_base = kind == CellKind::Base && owner == PLAYER;
 
     let plan = desktop_click_plan(
         &pointer.selected,
         target,
+        kind == CellKind::Base,
         own_base,
         shift,
         active_stream_from(&streams, target),
@@ -285,6 +295,10 @@ pub fn handle_desktop_input(
         DesktopClickPlan::NeedSource => {
             hud.last_event = "请先选择己方据点".into();
         }
+        DesktopClickPlan::Inspect(base) => {
+            pointer.inspected = Some(base);
+            hud.last_event = format!("正在查看 {:?} 据点", lookup.xy(base));
+        }
     }
 }
 
@@ -315,6 +329,7 @@ pub fn handle_touch_input(
 
     if keyboard.just_pressed(KeyCode::Escape) {
         drag.selected.clear();
+        drag.inspected = None;
         hud.last_event = "取消选择".into();
     }
 
@@ -323,6 +338,9 @@ pub fn handle_touch_input(
             Some(cell) => {
                 let kind = *kinds.get(lookup.entity(cell)).expect("格子缺少 CellKind");
                 let owner = owners.get(lookup.entity(cell)).expect("格子缺少 Owner").0;
+                if kind == CellKind::Base {
+                    drag.inspected = Some(cell);
+                }
                 if kind == CellKind::Base && owner == PLAYER {
                     if shift {
                         toggle_selection(&mut drag.selected, cell);
@@ -358,6 +376,9 @@ pub fn handle_touch_input(
     if let Some(source) = drag.dragging.take() {
         match cursor.and_then(|world| world_to_cell(world, &lookup, &kinds)) {
             Some(target) if target != source => {
+                if kinds.get(lookup.entity(target)) == Ok(&CellKind::Base) {
+                    drag.inspected = Some(target);
+                }
                 let count =
                     push_stream_intents(&mut intents, &mut telemetry, &drag.selected, target);
                 hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
@@ -398,11 +419,25 @@ pub fn handle_touch_input(
             &owners,
         );
         hud.last_event = format!("框选 {} 个据点", drag.selected.len());
+        drag.inspected = drag.selected.iter().min().copied();
     } else if let Some(target) = world_to_cell(release, &lookup, &kinds) {
-        let count = push_stream_intents(&mut intents, &mut telemetry, &drag.selected, target);
-        hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
+        let is_base = kinds.get(lookup.entity(target)) == Ok(&CellKind::Base);
+        if is_base {
+            drag.inspected = Some(target);
+        }
+        if drag.selected.is_empty() {
+            hud.last_event = if is_base {
+                format!("正在查看 {:?} 据点", lookup.xy(target))
+            } else {
+                "请先选择己方据点".into()
+            };
+        } else {
+            let count = push_stream_intents(&mut intents, &mut telemetry, &drag.selected, target);
+            hud.last_event = format!("{count} 个据点出兵 → {:?}", lookup.xy(target));
+        }
     } else {
         drag.selected.clear();
+        drag.inspected = None;
     }
 }
 
@@ -479,13 +514,13 @@ mod tests {
     fn desktop_click_flow_selects_then_sends() {
         let empty = HashSet::new();
         assert!(matches!(
-            desktop_click_plan(&empty, 3, true, false, false),
+            desktop_click_plan(&empty, 3, true, true, false, false),
             DesktopClickPlan::Select(3)
         ));
 
         let selected = HashSet::from([3]);
         let DesktopClickPlan::Send(commands) =
-            desktop_click_plan(&selected, 8, false, false, false)
+            desktop_click_plan(&selected, 8, false, false, false, false)
         else {
             panic!("第二次点击目标应生成派兵命令");
         };
@@ -503,8 +538,16 @@ mod tests {
     fn clicking_only_selected_active_base_stops_stream() {
         let selected = HashSet::from([4]);
         assert!(matches!(
-            desktop_click_plan(&selected, 4, true, false, true),
+            desktop_click_plan(&selected, 4, true, true, false, true),
             DesktopClickPlan::Stop(4)
+        ));
+    }
+
+    #[test]
+    fn unowned_base_can_be_inspected_without_a_source() {
+        assert!(matches!(
+            desktop_click_plan(&HashSet::new(), 8, true, false, false, false),
+            DesktopClickPlan::Inspect(8)
         ));
     }
 }
