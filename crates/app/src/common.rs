@@ -11,7 +11,7 @@ pub const STEP: f32 = 48.0;
 pub const PLAYER: FactionId = 1;
 
 pub fn app_background_color() -> Color {
-    Color::srgb(0.86, 0.90, 0.93)
+    Color::srgb(0.95, 0.94, 0.92)
 }
 
 pub fn background_text_color() -> Color {
