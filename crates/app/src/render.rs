@@ -56,21 +56,18 @@ fn cell_text(rules: &Rules, cells: &CellQuery, lookup: &GridLookup, e: Entity) -
     }
 }
 
-fn border_color(factions: &Factions, owner: FactionId) -> Color {
+fn border_color(factions: &Factions, tint: &RegionTint, owner: FactionId, idx: CellIdx) -> Color {
     if owner == NEUTRAL {
+        if let Some(color) = tint.0.get(&idx) {
+            return Color::srgba(color[0], color[1], color[2], 1.0);
+        }
         return Color::srgb(0.55, 0.55, 0.58);
     }
     let c = faction_color(factions, owner);
     Color::srgba(c[0], c[1], c[2], 1.0)
 }
 
-fn fill_color(
-    factions: &Factions,
-    tint: &LinkedTint,
-    cells: &CellQuery,
-    e: Entity,
-    idx: CellIdx,
-) -> Color {
+fn fill_color(factions: &Factions, cells: &CellQuery, e: Entity) -> Color {
     let (kind, owner, _, _, _) = cells.get(e).unwrap();
     if owner.0 != NEUTRAL {
         let c = faction_color(factions, owner.0);
@@ -84,15 +81,7 @@ fn fill_color(
             1.0,
         );
     }
-    if let Some(t) = tint.0.get(&idx) {
-        return Color::srgba(
-            t[0] * 0.10 + 0.90 * 0.90,
-            t[1] * 0.10 + 0.90 * 0.90,
-            t[2] * 0.10 + 0.90 * 0.90,
-            1.0,
-        );
-    }
-    Color::srgb(0.90, 0.90, 0.90)
+    Color::srgb(0.82, 0.83, 0.85)
 }
 
 fn text_color(kind: &CellKind, owner: FactionId) -> Color {
@@ -110,7 +99,7 @@ pub fn spawn_board_system(
     lookup: Option<Res<GridLookup>>,
     rules: Option<Res<Rules>>,
     factions: Option<Res<Factions>>,
-    tint: Option<Res<LinkedTint>>,
+    tint: Option<Res<RegionTint>>,
     cells: CellQuery,
     spawned: Option<Res<BoardSpawned>>,
 ) {
@@ -136,17 +125,17 @@ pub fn spawn_board_system(
         let pos = cell_pos(&lookup, origin, i);
         commands.spawn((
             Sprite {
-                color: border_color(&factions, owner.0),
+                color: border_color(&factions, &tint, owner.0, i),
                 custom_size: Some(Vec2::splat(CELL)),
                 ..default()
             },
             Transform::from_xyz(pos.x, pos.y, 0.0),
             BoardEntity,
-            CellBorder(e),
+            CellBorder(e, i),
         ));
         commands.spawn((
             Sprite {
-                color: fill_color(&factions, &tint, &cells, e, i),
+                color: fill_color(&factions, &cells, e),
                 custom_size: Some(Vec2::splat(CELL - BORDER * 2.0)),
                 ..default()
             },
@@ -196,7 +185,7 @@ pub fn spawn_board_system(
 
 pub fn sync_cells(
     factions: Res<Factions>,
-    tint: Res<LinkedTint>,
+    tint: Res<RegionTint>,
     rules: Res<Rules>,
     lookup: Res<GridLookup>,
     cells: CellQuery,
@@ -206,13 +195,12 @@ pub fn sync_cells(
 ) {
     for (cb, mut sprite) in borders.iter_mut() {
         if let Ok((_, owner, _, _, _)) = cells.get(cb.0) {
-            sprite.color = border_color(&factions, owner.0);
+            sprite.color = border_color(&factions, &tint, owner.0, cb.1);
         }
     }
     for (cf, mut sprite) in fills.iter_mut() {
         if let Ok((_, _, _, _, _)) = cells.get(cf.0) {
-            let idx = lookup.cells.iter().position(|&e| e == cf.0).unwrap_or(0);
-            sprite.color = fill_color(&factions, &tint, &cells, cf.0, idx);
+            sprite.color = fill_color(&factions, &cells, cf.0);
         }
     }
     for (mut label, mut text, mut color) in labels.iter_mut() {
@@ -269,5 +257,30 @@ pub fn sync_squads(
                 SquadDot,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn neutral_region_uses_its_subject_border_color() {
+        let subject_color = [0.18, 0.64, 0.42, 1.0];
+        let tint = RegionTint(HashMap::from([(7, subject_color)]));
+
+        assert_eq!(
+            border_color(&Factions::default(), &tint, NEUTRAL, 7),
+            Color::srgba(0.18, 0.64, 0.42, 1.0)
+        );
+    }
+
+    #[test]
+    fn neutral_cell_without_region_keeps_the_fallback_border() {
+        assert_eq!(
+            border_color(&Factions::default(), &RegionTint::default(), NEUTRAL, 7),
+            Color::srgb(0.55, 0.55, 0.58)
+        );
     }
 }

@@ -54,19 +54,32 @@ pub fn enter_playing(world: &mut World) {
     )
     .expect("地图加载失败");
 
-    // 关联地块淡染色表
-    let subject_list = world.resource::<SubjectList>().0.clone();
-    let mut tint = LinkedTint::default();
-    let bases = world.resource::<BaseList>().clone();
-    for &e in bases.0.iter() {
-        let b = world.get::<Base>(e).unwrap();
-        if let Some(s) = subject_list.iter().find(|s| s.id == b.subject_id) {
-            let c = parse_hex_color(&s.color);
-            for &t in &b.linked {
-                tint.0.insert(t, c);
-            }
-        }
-    }
+    // 据点和关联地块共用学科色边框，让中立区域也能一眼看出归属关系。
+    let tint = {
+        let subjects = &world.resource::<SubjectList>().0;
+        let bases = world.resource::<BaseList>();
+        let lookup = world.resource::<GridLookup>();
+        RegionTint(
+            bases
+                .0
+                .iter()
+                .filter_map(|&entity| {
+                    let base = world.get::<Base>(entity)?;
+                    let color = subjects
+                        .iter()
+                        .find(|subject| subject.id == base.subject_id)
+                        .map(|subject| parse_hex_color(&subject.color))?;
+                    let base_cell = lookup.cells.iter().position(|&cell| cell == entity)?;
+                    Some((base_cell, base.linked.clone(), color))
+                })
+                .flat_map(|(base_cell, linked, color)| {
+                    std::iter::once(base_cell)
+                        .chain(linked)
+                        .map(move |cell| (cell, color))
+                })
+                .collect(),
+        )
+    };
 
     let (controllers, policy_controllers, diff_name) = configured_controllers(
         difficulty,
@@ -130,7 +143,7 @@ pub fn exit_playing(world: &mut World) {
     world.remove_resource::<BaseList>();
     world.remove_resource::<Rules>();
     world.remove_resource::<Factions>();
-    world.remove_resource::<LinkedTint>();
+    world.remove_resource::<RegionTint>();
     world.remove_resource::<DifficultyName>();
     world.remove_resource::<CurrentMapFile>();
     world.remove_resource::<BoardSpawned>();

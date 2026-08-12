@@ -167,9 +167,9 @@ pub struct DifficultyName(pub &'static str);
 #[derive(Resource)]
 pub struct CurrentMapFile(pub String);
 
-/// 关联地块 → 归属学科颜色（中立地块的淡染色用）
+/// 据点区域格子 → 归属学科颜色（中立状态的区域边框用）
 #[derive(Resource, Default)]
-pub struct LinkedTint(pub HashMap<CellIdx, [f32; 4]>);
+pub struct RegionTint(pub HashMap<CellIdx, [f32; 4]>);
 
 #[derive(Resource, Default)]
 pub struct DragState {
@@ -233,7 +233,7 @@ pub struct EndButton {
 
 /// 渲染实体 → 逻辑格子实体
 #[derive(Component)]
-pub struct CellBorder(pub Entity);
+pub struct CellBorder(pub Entity, pub CellIdx);
 #[derive(Component)]
 pub struct CellFill(pub Entity);
 #[derive(Component)]

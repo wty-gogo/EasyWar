@@ -4,6 +4,37 @@ use crate::common::*;
 use bevy::prelude::*;
 use easywar_logic::*;
 
+fn selected_base_frames() -> [(f32, Color); 3] {
+    [
+        (CELL + 18.0, Color::srgba(0.03, 0.08, 0.10, 0.95)),
+        (CELL + 14.0, Color::srgb(0.15, 0.95, 1.0)),
+        (CELL + 10.0, Color::srgb(0.65, 1.0, 1.0)),
+    ]
+}
+
+fn draw_selected_base(gizmos: &mut Gizmos, position: Vec2) {
+    // 深色轮廓托住高亮，青色双框保证在任意阵营色和常驻金框上都清晰可见。
+    for (size, color) in selected_base_frames() {
+        gizmos.rect_2d(
+            Isometry2d::from_translation(position),
+            Vec2::splat(size),
+            color,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_base_frames_stay_outside_the_player_frame() {
+        assert!(selected_base_frames()
+            .iter()
+            .all(|(size, _)| *size > CELL + 6.0));
+    }
+}
+
 pub fn draw_overlays(
     lookup: Res<GridLookup>,
     factions: Res<Factions>,
@@ -39,13 +70,9 @@ pub fn draw_overlays(
             }
         }
     }
-    // 选中据点橙框
+    // 选中据点高对比双框
     for &src in &drag.selected {
         let p = cell_pos(&lookup, origin, src);
-        gizmos.rect_2d(
-            Isometry2d::from_translation(p),
-            Vec2::splat(CELL + 12.0),
-            Color::srgb(1.0, 0.6, 0.1),
-        );
+        draw_selected_base(&mut gizmos, p);
     }
 }
