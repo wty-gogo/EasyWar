@@ -3,7 +3,9 @@
 //! 默认写入 `training/telemetry/`；`EASYWAR_TELEMETRY=0` 可关闭，也可把变量值
 //! 直接设为其他输出目录。日志采用逐行 JSON，单局一个文件，写入失败只停用本局埋点。
 
-use crate::common::{workspace_assets, CurrentMapFile, DifficultyName, InputMode, PLAYER};
+#[cfg(test)]
+use crate::common::PLAYER;
+use crate::common::{workspace_assets, CurrentMapFile, DifficultyName, InputMode};
 use bevy::prelude::*;
 use easywar_logic::rl::{
     observe_world, observe_world_tactical, world_intent_to_action, RlObservation, RL_ACTION_COUNT,

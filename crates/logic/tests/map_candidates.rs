@@ -501,6 +501,18 @@ fn custom_subject_selection_keeps_three_factions_distinct() {
             .map(|faction| faction.name.as_str())
             .collect::<HashSet<_>>();
         assert_eq!(names.len(), 3, "{name} 的三个初始阵营必须可区分");
+        let player = app
+            .world()
+            .resource::<Factions>()
+            .0
+            .iter()
+            .find(|faction| faction.is_player)
+            .expect("地图必须包含玩家阵营");
+        assert_eq!(
+            player.color,
+            parse_hex_color("#3B82F6"),
+            "{name} 的玩家阵营色不应随自选学科改变"
+        );
     }
 }
 

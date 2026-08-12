@@ -57,10 +57,10 @@ fn cell_text(rules: &Rules, cells: &CellQuery, lookup: &GridLookup, e: Entity) -
 }
 
 fn border_color(factions: &Factions, tint: &RegionTint, owner: FactionId, idx: CellIdx) -> Color {
+    if let Some(color) = tint.0.get(&idx) {
+        return Color::srgba(color[0], color[1], color[2], 1.0);
+    }
     if owner == NEUTRAL {
-        if let Some(color) = tint.0.get(&idx) {
-            return Color::srgba(color[0], color[1], color[2], 1.0);
-        }
         return Color::srgb(0.55, 0.55, 0.58);
     }
     let c = faction_color(factions, owner);
@@ -281,6 +281,23 @@ mod tests {
         assert_eq!(
             border_color(&Factions::default(), &RegionTint::default(), NEUTRAL, 7),
             Color::srgb(0.55, 0.55, 0.58)
+        );
+    }
+
+    #[test]
+    fn occupied_region_keeps_its_subject_border_color() {
+        let subject_color = [0.72, 0.26, 0.58, 1.0];
+        let tint = RegionTint(HashMap::from([(7, subject_color)]));
+        let factions = Factions(vec![Faction {
+            id: PLAYER,
+            name: "玩家".into(),
+            color: [0.23, 0.51, 0.96, 1.0],
+            is_player: true,
+        }]);
+
+        assert_eq!(
+            border_color(&factions, &tint, PLAYER, 7),
+            Color::srgba(0.72, 0.26, 0.58, 1.0)
         );
     }
 }

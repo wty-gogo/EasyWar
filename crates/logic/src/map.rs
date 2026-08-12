@@ -7,6 +7,9 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
+/// 玩家阵营使用固定蓝色，避免开局学科改变玩家身份色。
+const PLAYER_FACTION_COLOR: [f32; 4] = [59.0 / 255.0, 130.0 / 255.0, 246.0 / 255.0, 1.0];
+
 // ---------- TOML 文件结构（与 assets/maps/*.toml 对应） ----------
 
 #[derive(Deserialize)]
@@ -468,7 +471,11 @@ fn spawn_map_inner(
             Faction {
                 id,
                 name: subject.name.clone(),
-                color: parse_hex_color(&subject.color),
+                color: if owner == "player" {
+                    PLAYER_FACTION_COLOR
+                } else {
+                    parse_hex_color(&subject.color)
+                },
                 is_player: owner == "player",
             }
         })

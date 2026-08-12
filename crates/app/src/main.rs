@@ -60,6 +60,7 @@ fn main() {
                 ..default()
             }),
     )
+    .init_gizmo_group::<overlay::SelectedMarkerGizmos>()
     .add_plugins(GamePlugin)
     .init_state::<AppState>()
     .insert_resource(SubjectList(list))
@@ -75,9 +76,15 @@ fn main() {
     .insert_resource(neural_ai::NeuralModelResource::embedded())
     .insert_resource(telemetry::TelemetryRecorder::from_environment())
     .insert_resource(telemetry::PendingPlayerCommands::default())
-    .add_systems(Startup, |mut commands: Commands| {
-        commands.spawn(Camera2d);
-    })
+    .add_systems(
+        Startup,
+        (
+            |mut commands: Commands| {
+                commands.spawn(Camera2d);
+            },
+            overlay::configure_gizmos,
+        ),
+    )
     // 菜单
     .add_systems(OnEnter(AppState::Menu), menu::enter_menu)
     .add_systems(OnExit(AppState::Menu), cleanup::<MenuEntity>)
