@@ -64,6 +64,7 @@ fn main() {
     .add_plugins(GamePlugin)
     .init_state::<AppState>()
     .insert_resource(SubjectList(list))
+    .insert_resource(ClearColor(app_background_color()))
     .insert_resource(MenuSelection {
         subject: 1, // 默认语文
         difficulty: configured_difficulty(),

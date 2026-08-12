@@ -130,7 +130,7 @@ pub fn enter_menu(
         &bold,
         48.0,
         320.0,
-        Color::WHITE,
+        background_text_color(),
     );
     spawn_text(
         &mut commands,
@@ -138,7 +138,7 @@ pub fn enter_menu(
         &font,
         20.0,
         258.0,
-        Color::srgb(0.7, 0.7, 0.7),
+        background_muted_text_color(),
     );
 
     // 学科按钮（20 门：5 列 × 4 行网格，按行居中）
@@ -184,7 +184,7 @@ pub fn enter_menu(
         &font,
         18.0,
         -25.0,
-        Color::srgb(0.7, 0.7, 0.7),
+        background_muted_text_color(),
     );
     commands.spawn((
         Sprite {
@@ -215,7 +215,7 @@ pub fn enter_menu(
         &font,
         18.0,
         -108.0,
-        Color::srgb(0.7, 0.7, 0.7),
+        background_muted_text_color(),
     );
     const MAP_COLUMNS: usize = 4;
     for (i, map) in MAPS.iter().enumerate() {
@@ -287,7 +287,7 @@ pub fn enter_menu(
         &font,
         14.0,
         -292.0,
-        Color::srgb(0.5, 0.5, 0.5),
+        background_muted_text_color(),
     );
 }
 

@@ -165,7 +165,7 @@ pub fn spawn_board_system(
             font_size: 15.0.into(),
             ..default()
         },
-        TextColor(Color::srgb(0.5, 0.5, 0.5)),
+        TextColor(background_muted_text_color()),
         Transform::from_xyz(0.0, 360.0, 1.0),
         BoardEntity,
     ));
@@ -176,7 +176,7 @@ pub fn spawn_board_system(
             font_size: 12.0.into(),
             ..default()
         },
-        TextColor(Color::srgb(0.6, 0.6, 0.6)),
+        TextColor(background_muted_text_color()),
         Transform::from_xyz(0.0, 335.0, 1.0),
         BoardEntity,
         HudText,

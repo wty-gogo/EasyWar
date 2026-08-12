@@ -10,6 +10,18 @@ pub const BORDER: f32 = 4.0;
 pub const STEP: f32 = 48.0;
 pub const PLAYER: FactionId = 1;
 
+pub fn app_background_color() -> Color {
+    Color::srgb(0.86, 0.90, 0.93)
+}
+
+pub fn background_text_color() -> Color {
+    Color::srgb(0.12, 0.18, 0.24)
+}
+
+pub fn background_muted_text_color() -> Color {
+    Color::srgb(0.30, 0.37, 0.43)
+}
+
 #[derive(Clone, Copy)]
 pub enum DifficultyKind {
     Rule(fn() -> AiParams),
